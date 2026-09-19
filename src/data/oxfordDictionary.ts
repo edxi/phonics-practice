@@ -8,8 +8,8 @@ export interface OxfordDictEntry {
   def: string; // Chinese definition from ECDICT / Oxford
   ipa: string; // International Phonetic Alphabet
   oxfordLevel?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
-  syllables: SyllableUnit[];
-  phonicsUnits: PhonicsUnit[];
+  syllables?: SyllableUnit[];
+  phonicsUnits?: PhonicsUnit[];
   root?: {
     root: string;
     rootMeaning: string;

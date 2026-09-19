@@ -45,6 +45,40 @@ function practiceSetToRow(set: PracticeSet, userId: string): PracticeSetRow {
   };
 }
 
+import { createWordItem } from '../data/phonicsEngine';
+
+function sanitizePracticeSet(set: PracticeSet): { set: PracticeSet; changed: boolean } {
+  let changed = false;
+  const newWords = set.words.map((w) => {
+    const isDummyDef = !w.definition || w.definition.includes('（新词汇）') || w.definition === '新学单词';
+    const isDummyPhonics = w.phonicsUnits.length <= 1 && w.word.length >= 4;
+    const isDummySyllables = w.syllables.length <= 1 && w.word.length >= 5;
+    const isDummyIpa = !w.ipa || w.ipa === `/${w.word}/`;
+
+    if (isDummyDef || isDummyPhonics || isDummySyllables || isDummyIpa) {
+      changed = true;
+      const fresh = createWordItem(w.word);
+      return {
+        ...w,
+        ipa: fresh.ipa,
+        pos: fresh.pos,
+        definition: fresh.definition,
+        syllables: fresh.syllables,
+        phonicsUnits: fresh.phonicsUnits,
+        rootAffix: fresh.rootAffix || w.rootAffix,
+        spokenExample: fresh.spokenExample || w.spokenExample,
+        detail: fresh.detail || w.detail,
+      };
+    }
+    return w;
+  });
+
+  return {
+    set: changed ? { ...set, words: newWords } : set,
+    changed,
+  };
+}
+
 export const storageService = {
   // Get storage key based on whether a user is logged in
   getStorageKey(userId?: string): string {
@@ -57,7 +91,19 @@ export const storageService = {
     try {
       const data = localStorage.getItem(key);
       if (data) {
-        return JSON.parse(data);
+        const rawSets: PracticeSet[] = JSON.parse(data);
+        if (Array.isArray(rawSets) && rawSets.length > 0) {
+          let anyChanged = false;
+          const sanitized = rawSets.map((s) => {
+            const { set: cleanedSet, changed } = sanitizePracticeSet(s);
+            if (changed) anyChanged = true;
+            return cleanedSet;
+          });
+          if (anyChanged) {
+            this.savePracticeSets(sanitized, userId);
+          }
+          return sanitized;
+        }
       }
     } catch {
       // Fallback
@@ -101,8 +147,17 @@ export const storageService = {
 
       if (data && data.length > 0) {
         const loadedSets = (data as PracticeSetRow[]).map(rowToPracticeSet);
-        this.savePracticeSets(loadedSets, userId);
-        return loadedSets;
+        let anyChanged = false;
+        const sanitized = loadedSets.map((s) => {
+          const { set: cleanedSet, changed } = sanitizePracticeSet(s);
+          if (changed) anyChanged = true;
+          return cleanedSet;
+        });
+        this.savePracticeSets(sanitized, userId);
+        if (anyChanged) {
+          this.syncAllToCloud(userId, sanitized);
+        }
+        return sanitized;
       } else {
         // User has no sets in cloud yet: seed with INITIAL_PRACTICE_SETS
         const initialSets = this.getPracticeSets();

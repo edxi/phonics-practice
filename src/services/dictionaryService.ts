@@ -1,31 +1,58 @@
-// Open-Source Dictionary Service (Oxford 3000™ + ECDICT + Free Dictionary API)
+// Open-Source Dictionary Service (Oxford 3000™ + ECDICT 16000+ Core Lexicon + Morphology)
 import { OXFORD_ECDICT_DATABASE, type OxfordDictEntry } from '../data/oxfordDictionary';
+import ecdictData from '../data/ecdictCompact.json';
 import type { WordItem } from '../types/phonics';
 
 const CACHE_KEY_PREFIX = 'phonics_dict_cache_';
+
+// 16,591 Core Words dictionary
+const ECDICT_MAP = ecdictData as unknown as Record<string, [string, string, string]>;
 
 export class DictionaryService {
   private memoryCache: Map<string, OxfordDictEntry> = new Map();
 
   constructor() {
-    // Preload memory cache with Oxford/ECDICT database
+    // Preload memory cache with Oxford/ECDICT curated entries
     for (const [key, entry] of Object.entries(OXFORD_ECDICT_DATABASE)) {
       this.memoryCache.set(key.toLowerCase(), entry);
     }
   }
 
   /**
-   * Synchronous dictionary lookup: checks memory cache -> localStorage -> morphology
+   * Synchronous dictionary lookup:
+   * 1. Curated Oxford/ECDICT database
+   * 2. 16,000+ ECDICT Core offline Lexicon
+   * 3. LocalStorage persistent cache
+   * 4. Morphological derivation
    */
   lookupSync(rawWord: string): OxfordDictEntry {
     const clean = rawWord.trim().toLowerCase().replace(/[^a-z]/g, '');
 
-    // 1. Memory Cache / Oxford 3000 & ECDICT Database
+    // 1. Curated memory cache
     if (this.memoryCache.has(clean)) {
       return this.memoryCache.get(clean)!;
     }
 
-    // 2. LocalStorage Persistent Cache
+    // 2. 16,000+ ECDICT Offline Lexicon (0ms instant lookup)
+    if (ECDICT_MAP[clean]) {
+      const [ipa, rawPos, def] = ECDICT_MAP[clean];
+      const pos = rawPos || 'n.';
+      const entry: OxfordDictEntry = {
+        word: clean,
+        pos,
+        def,
+        ipa: ipa || `/${clean}/`,
+        example: {
+          en: `Can you read and practice the word "${clean}"?`,
+          zh: `你能大声朗读并练习单词 "${clean}" 吗？`,
+        },
+        source: '牛津 3000 / ECDICT 开源词库',
+      };
+      this.memoryCache.set(clean, entry);
+      return entry;
+    }
+
+    // 3. LocalStorage Persistent Cache
     try {
       const cached = localStorage.getItem(`${CACHE_KEY_PREFIX}${clean}`);
       if (cached) {
@@ -37,12 +64,12 @@ export class DictionaryService {
       // Ignore localStorage errors
     }
 
-    // 3. Morphological & Affix Derivation Engine
+    // 4. Morphological & Affix Derivation Engine
     return this.deriveFromMorphology(clean);
   }
 
   /**
-   * Asynchronous dictionary lookup: tries online Open Dictionary API if not found locally
+   * Asynchronous dictionary lookup: queries translation API if not in offline dictionary
    */
   async lookupAsync(rawWord: string): Promise<OxfordDictEntry> {
     const clean = rawWord.trim().toLowerCase().replace(/[^a-z]/g, '');
@@ -53,61 +80,32 @@ export class DictionaryService {
       return localResult;
     }
 
-    // 4. Query Open-Source Free Dictionary API in background
+    // 5. Try online translation API (MyMemory) for words outside the 16,000 core words
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s safe timeout
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
 
       const res = await fetch(
-        `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(clean)}`,
+        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(clean)}&langpair=en|zh-CN`,
         { signal: controller.signal }
       );
       clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          const entry = data[0];
-          const phonetic = entry.phonetic || entry.phonetics?.find((p: any) => p.text)?.text || `/${clean}/`;
-          
-          let pos = 'n.';
-          let definition = localResult.def;
-          let exampleEn = `The word "${clean}" is important to learn.`;
-          let exampleZh = `单词 "${clean}" 值得认真学习。`;
-
-          if (entry.meanings && entry.meanings.length > 0) {
-            const m = entry.meanings[0];
-            pos = m.partOfSpeech ? `${m.partOfSpeech.slice(0, 3)}.` : 'n.';
-            
-            if (m.definitions && m.definitions.length > 0) {
-              const defObj = m.definitions[0];
-              if (defObj.definition) {
-                // If definition is English, use it along with Chinese morphological context
-                definition = `${localResult.def} (${defObj.definition})`;
-              }
-              if (defObj.example) {
-                exampleEn = defObj.example;
-                exampleZh = `例句：${defObj.example}`;
-              }
-            }
-          }
-
+        const translation = data.responseData?.translatedText;
+        if (translation && translation.toLowerCase() !== clean) {
           const enriched: OxfordDictEntry = {
             ...localResult,
-            ipa: phonetic,
-            pos,
-            def: definition,
-            example: { en: exampleEn, zh: exampleZh },
-            source: 'Free Dictionary API / Oxford Open'
+            def: translation,
+            source: '在线英汉词库',
           };
-
-          // Cache result
           this.saveToCache(clean, enriched);
           return enriched;
         }
       }
     } catch {
-      // Graceful offline fallback
+      // Graceful fallback to localResult
     }
 
     return localResult;
@@ -124,7 +122,7 @@ export class DictionaryService {
       pos: enriched.pos || wordItem.pos,
       definition: enriched.def || wordItem.definition,
       spokenExample: enriched.example || wordItem.spokenExample,
-      detail: `${enriched.source} 收录词汇`
+      detail: `${enriched.source} 收录词汇`,
     };
   }
 
@@ -149,26 +147,18 @@ export class DictionaryService {
         pos: 'adj.',
         def: `关于${stem}的；具有...性质的`,
         ipa: `/${clean}/`,
-        syllables: [
-          { text: stem, phoneticPart: stem, color: '#ff7b39' },
-          { text: clean.slice(stem.length), phoneticPart: clean.slice(stem.length), color: '#3b82f6' }
-        ],
-        phonicsUnits: [
-          { letters: stem, phoneme: `/${stem}/`, type: 'blend' },
-          { letters: clean.slice(stem.length), phoneme: '/ʃəl/', type: 'digraph' }
-        ],
         root: {
           root: stem,
           rootMeaning: stem,
           affix: clean.slice(stem.length),
           affixMeaning: '形容词后缀',
-          desc: `源自词根 ${stem} + 后缀 -${clean.slice(stem.length)} (相关的)`
+          desc: `源自词根 ${stem} + 后缀 -${clean.slice(stem.length)} (相关的)`,
         },
         example: {
           en: `The word "${clean}" is an important descriptive word.`,
-          zh: `单词 "${clean}" 是一个重要的描述性词汇。`
+          zh: `单词 "${clean}" 是一个重要的描述性词汇。`,
         },
-        source: 'ECDICT 形态学派生词'
+        source: 'ECDICT 形态学派生词',
       };
     }
 
@@ -180,26 +170,18 @@ export class DictionaryService {
         pos: 'n.',
         def: `${stem}的行为或状态`,
         ipa: `/${clean}/`,
-        syllables: [
-          { text: stem, phoneticPart: stem, color: '#ff7b39' },
-          { text: clean.slice(stem.length), phoneticPart: clean.slice(stem.length), color: '#3b82f6' }
-        ],
-        phonicsUnits: [
-          { letters: stem, phoneme: `/${stem}/`, type: 'blend' },
-          { letters: clean.slice(stem.length), phoneme: '/ʃn/', type: 'digraph' }
-        ],
         root: {
           root: stem,
           rootMeaning: stem,
           affix: clean.slice(stem.length),
           affixMeaning: '名词后缀',
-          desc: `词根 ${stem} + 名词后缀 -${clean.slice(stem.length)}`
+          desc: `词根 ${stem} + 名词后缀 -${clean.slice(stem.length)}`,
         },
         example: {
           en: `Pay close attention to this ${clean}.`,
-          zh: `请密切关注这个 ${clean}。`
+          zh: `请密切关注这个 ${clean}。`,
         },
-        source: 'ECDICT 形态学派生词'
+        source: 'ECDICT 形态学派生词',
       };
     }
 
@@ -211,35 +193,25 @@ export class DictionaryService {
         pos: 'adj.',
         def: `能够${stem}的；易于...的`,
         ipa: `/${clean}/`,
-        syllables: [
-          { text: stem, phoneticPart: stem, color: '#ff7b39' },
-          { text: clean.slice(stem.length), phoneticPart: clean.slice(stem.length), color: '#3b82f6' }
-        ],
-        phonicsUnits: [
-          { letters: stem, phoneme: `/${stem}/`, type: 'blend' },
-          { letters: clean.slice(stem.length), phoneme: '/əbl/', type: 'digraph' }
-        ],
         example: {
           en: `This material is ${clean} for everyday use.`,
-          zh: `这种材料日常使用非常合适。`
+          zh: `这种材料日常使用非常合适。`,
         },
-        source: 'ECDICT 形态学派生词'
+        source: 'ECDICT 形态学派生词',
       };
     }
 
-    // 4. Default fallback entry
+    // 4. Default fallback entry - NOTE: Do not populate dummy syllables/phonics here!
     return {
       word: clean,
       pos: 'n./v.',
       def: `${clean}（新词汇）`,
       ipa: `/${clean}/`,
-      syllables: [{ text: clean, phoneticPart: clean, color: '#ff7b39' }],
-      phonicsUnits: [{ letters: clean, phoneme: `/${clean}/`, type: 'blend' }],
       example: {
         en: `Can you read and practice the word "${clean}"?`,
-        zh: `你能大声朗读并练习单词 "${clean}" 吗？`
+        zh: `你能大声朗读并练习单词 "${clean}" 吗？`,
       },
-      source: '开源词库解析'
+      source: '开源词库解析',
     };
   }
 }

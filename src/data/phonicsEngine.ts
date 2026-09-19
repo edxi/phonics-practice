@@ -138,9 +138,9 @@ export function splitSyllables(rawWord: string): SyllableUnit[] {
     return found.syllables;
   }
 
-  // 2. Check Oxford 3000 / ECDICT dictionary
+  // 2. Check Oxford 3000 / ECDICT dictionary ONLY if multi-syllables
   const dict = dictionaryService.lookupSync(word);
-  if (dict.syllables && dict.syllables.length > 0) {
+  if (dict.syllables && dict.syllables.length > 1) {
     return dict.syllables;
   }
 
@@ -201,9 +201,9 @@ export function decomposePhonics(rawWord: string): PhonicsUnit[] {
     return found.phonicsUnits;
   }
 
-  // 2. Check Oxford 3000 / ECDICT dictionary
+  // 2. Check Oxford 3000 / ECDICT dictionary ONLY if it has multi-unit breakdown
   const dict = dictionaryService.lookupSync(word);
-  if (dict.phonicsUnits && dict.phonicsUnits.length > 0) {
+  if (dict.phonicsUnits && dict.phonicsUnits.length > 1) {
     return dict.phonicsUnits;
   }
 
@@ -276,9 +276,17 @@ export function createWordItem(rawWord: string): WordItem {
   }
 
   const dict = dictionaryService.lookupSync(clean);
-  const syllables = dict.syllables && dict.syllables.length > 0 ? dict.syllables : splitSyllables(clean);
-  const phonicsUnits = dict.phonicsUnits && dict.phonicsUnits.length > 0 ? dict.phonicsUnits : decomposePhonics(clean);
-  const ipa = dict.ipa || `/${phonicsUnits.map(u => u.phoneme.replace(/\//g, '')).join('·')}/`;
+  const syllables = (dict.syllables && dict.syllables.length > 1) ? dict.syllables : splitSyllables(clean);
+  const phonicsUnits = (dict.phonicsUnits && dict.phonicsUnits.length > 1) ? dict.phonicsUnits : decomposePhonics(clean);
+  
+  // Clean up IPA
+  let ipa = dict.ipa;
+  if (!ipa || ipa === `/${clean}/`) {
+    ipa = `/${phonicsUnits.map(u => u.phoneme.replace(/\//g, '')).join('·')}/`;
+  } else {
+    ipa = ipa.replace(/^\/\./, '/ˌ');
+  }
+  
   const pos = dict.pos || 'n.';
   const definition = dict.def || '新学单词';
 
@@ -323,9 +331,6 @@ export function createWordItem(rawWord: string): WordItem {
     masteryScore: 0,
     reviewCount: 1
   };
-
-  // Background enrichment (async)
-  dictionaryService.enrichWordItem(item).catch(() => {});
 
   return item;
 }

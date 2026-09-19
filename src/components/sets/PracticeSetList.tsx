@@ -1,22 +1,27 @@
 import React from 'react';
 import { Camera, BookOpen, Sparkles, ChevronRight, Play } from 'lucide-react';
 import type { PracticeSet } from '../../types/phonics';
+import { UserProfileMenu } from '../auth/UserProfileMenu';
 
 interface PracticeSetListProps {
   sets: PracticeSet[];
   onSelectSet: (set: PracticeSet) => void;
   onStartScan: () => void;
+  onOpenAuth: () => void;
+  syncStatus?: 'synced' | 'syncing' | 'offline';
 }
 
 export const PracticeSetList: React.FC<PracticeSetListProps> = ({
   sets,
   onSelectSet,
   onStartScan,
+  onOpenAuth,
+  syncStatus = 'synced',
 }) => {
   return (
     <div className="flex-1 flex flex-col justify-between bg-[#f8f7fe] select-none">
       {/* Header */}
-      <div className="px-5 pt-4 pb-3 bg-white border-b border-purple-50 shrink-0">
+      <div className="px-4 pt-4 pb-3 bg-white border-b border-purple-50 shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-[#6d54f5] to-purple-400 flex items-center justify-center text-white shadow-md shadow-purple-200">
@@ -32,13 +37,16 @@ export const PracticeSetList: React.FC<PracticeSetListProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={onStartScan}
-            className="px-3.5 py-1.5 rounded-full bg-[#6d54f5] text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-purple-200 active:scale-95 transition-all"
-          >
-            <Camera className="w-3.5 h-3.5" />
-            <span>扫词建集</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <UserProfileMenu onOpenAuth={onOpenAuth} syncStatus={syncStatus} />
+            <button
+              onClick={onStartScan}
+              className="px-3 py-1.5 rounded-full bg-[#6d54f5] text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-purple-200 active:scale-95 transition-all cursor-pointer"
+            >
+              <Camera className="w-3.5 h-3.5" />
+              <span>扫词建集</span>
+            </button>
+          </div>
         </div>
       </div>
 

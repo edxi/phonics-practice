@@ -40,3 +40,4 @@ ios/App/DerivedData
 ios/App/*.xcworkspace/xcuserdata
 ios/App/*.xcodeproj/xcuserdata
 
+dist-apk/

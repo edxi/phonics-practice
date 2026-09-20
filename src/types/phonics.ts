@@ -66,6 +66,7 @@ export interface ScannedWordBox {
   selected: boolean;
   definition?: string;
   level?: 'basic' | 'phonics' | 'advanced';
+  inDictionary?: boolean;
 }
 
 export interface ScanResult {

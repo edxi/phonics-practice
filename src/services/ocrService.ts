@@ -1,6 +1,7 @@
 import Tesseract from 'tesseract.js';
 import type { ScannedWordBox, ScanResult } from '../types/phonics';
 import { createWordItem } from '../data/phonicsEngine';
+import { dictionaryService } from './dictionaryService';
 
 // Preset sample picture book images for instant realistic demo
 export const DEMO_PICTURE_BOOKS = [
@@ -34,15 +35,7 @@ export const DEMO_PICTURE_BOOKS = [
   }
 ];
 
-// Common English words dictionary for spell checking & noise filtering
-const KNOWN_WORDS = new Set([
-  'nail', 'clipper', 'clippers', 'tools', 'tool', 'beauty', 'cook', 'book',
-  'clever', 'polite', 'careless', 'quiet', 'cute', 'friendly', 'helpful', 'sunshine',
-  'happy', 'teacher', 'pencil', 'raincoat', 'beautiful', 'jump', 'apple', 'banana',
-  'cat', 'dog', 'elephant', 'fish', 'kite', 'lion', 'monkey', 'orange', 'rabbit',
-  'school', 'water', 'yellow', 'zebra', 'wonderful', 'care', 'less', 'good', 'day',
-  'time', 'life', 'read', 'write', 'word', 'sound', 'play', 'love', 'home', 'star'
-]);
+
 
 /**
  * Preprocess image on canvas: upscales and applies high-contrast adaptive grayscale
@@ -107,12 +100,13 @@ function cleanAndSpellcheck(raw: string): string {
   const clean = raw.replace(/[^a-zA-Z]/g, '').toLowerCase();
   if (clean.length < 2) return '';
 
+  // Filter obvious OCR noise tokens
+  if (dictionaryService.isNoiseWord(clean)) return '';
+
   if (clean === 'clippsar' || clean === 'cliipser' || clean === 'clippr') return 'clipper';
   if (clean === 'beautv' || clean === 'beaut') return 'beauty';
   if (clean === 'toois' || clean === 'tooi') return 'tools';
   if (clean === 'naii') return 'nail';
-
-  if (KNOWN_WORDS.has(clean)) return clean;
 
   return clean;
 }
@@ -167,6 +161,7 @@ export const ocrService = {
       height: w.height,
       confidence: 0.98,
       selected: true,
+      inDictionary: true,
       definition: w.def,
       level: 'phonics'
     }));
@@ -233,6 +228,9 @@ export const ocrService = {
       const wordsInLine = line.split(/\s+/).map(w => cleanAndSpellcheck(w)).filter(Boolean);
       for (const w of wordsInLine) {
         if (w.length < 2) continue;
+        if (dictionaryService.isNoiseWord(w)) continue;
+
+        const inDict = dictionaryService.isInDictionary(w);
         const wordInfo = createWordItem(w);
 
         const subX = region.x + (offsetIdx % 2) * (region.width * 0.45);
@@ -247,7 +245,8 @@ export const ocrService = {
           width: Math.min(region.width, Math.max(12, w.length * 3.5)),
           height: Math.max(6, Math.min(14, region.height * 0.8)),
           confidence: 0.95,
-          selected: true,
+          selected: inDict,
+          inDictionary: inDict,
           definition: wordInfo.definition,
           level: 'phonics'
         });
@@ -308,6 +307,19 @@ export const ocrService = {
       const clean = cleanAndSpellcheck(w.text || '');
       if (!clean || clean.length < 2) continue;
 
+      const confidence = (w.confidence || 80) / 100;
+      const inDict = dictionaryService.isInDictionary(clean);
+
+      // Discard low-confidence words that are not in dictionary
+      if (!inDict && confidence < 0.6) {
+        continue;
+      }
+
+      // Check noise word
+      if (dictionaryService.isNoiseWord(clean)) {
+        continue;
+      }
+
       const x0 = w.bbox ? w.bbox.x0 : 10;
       const y0 = w.bbox ? w.bbox.y0 : 10;
       const x1 = w.bbox ? w.bbox.x1 : 100;
@@ -332,8 +344,9 @@ export const ocrService = {
         y: Math.round(y * 10) / 10,
         width: Math.round(width * 10) / 10,
         height: Math.round(height * 10) / 10,
-        confidence: (w.confidence || 80) / 100,
-        selected: true,
+        confidence,
+        selected: inDict,
+        inDictionary: inDict,
         definition: wordInfo.definition,
         level: 'phonics'
       });
@@ -344,10 +357,11 @@ export const ocrService = {
       const wordsFromText = res.data.text
         .split(/\s+/)
         .map(w => cleanAndSpellcheck(w))
-        .filter(w => w.length >= 2);
+        .filter(w => w.length >= 2 && !dictionaryService.isNoiseWord(w));
 
       const uniqueWords = Array.from(new Set(wordsFromText));
       uniqueWords.forEach((wordText, idx) => {
+        const inDict = dictionaryService.isInDictionary(wordText);
         const wordInfo = createWordItem(wordText);
         const col = idx % 3;
         const row = Math.floor(idx / 3);
@@ -360,7 +374,8 @@ export const ocrService = {
           width: Math.min(25, wordText.length * 3.5 + 8),
           height: 8,
           confidence: 0.85,
-          selected: true,
+          selected: inDict,
+          inDictionary: inDict,
           definition: wordInfo.definition,
           level: 'phonics'
         });

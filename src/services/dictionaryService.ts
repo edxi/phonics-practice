@@ -46,6 +46,94 @@ function generateNaturalFallbackExample(clean: string, pos: string, def: string)
   };
 }
 
+// Valid 2-letter English words whitelist
+export const VALID_2_LETTER_WORDS = new Set([
+  'am', 'an', 'as', 'at', 'be', 'by', 'do', 'go', 'he', 'hi',
+  'if', 'in', 'is', 'it', 'me', 'my', 'no', 'of', 'on', 'or',
+  'ox', 'so', 'to', 'up', 'us', 'we', 'ok', 'ex', 'tv', 'id', 'ps'
+]);
+
+/**
+ * Returns the base lemma if the word is an inflected form of a known word in ECDICT/Oxford
+ */
+export function findLemma(word: string, dictCheck: (w: string) => boolean): { lemma: string; form: string } | null {
+  if (word.length <= 3) return null;
+
+  // 1. -ies -> -y (cities -> city, babies -> baby)
+  if (word.endsWith('ies') && word.length > 4) {
+    const base = word.slice(0, -3) + 'y';
+    if (dictCheck(base)) return { lemma: base, form: '复数/第三人称单数' };
+  }
+
+  // 2. -es -> base (boxes -> box, watches -> watch)
+  if (word.endsWith('es') && word.length > 4) {
+    const base = word.slice(0, -2);
+    if (dictCheck(base)) return { lemma: base, form: '复数/第三人称单数' };
+  }
+
+  // 3. -s -> base (cats -> cat, dogs -> dog, runs -> run)
+  if (word.endsWith('s') && word.length > 3) {
+    const base = word.slice(0, -1);
+    if (dictCheck(base)) return { lemma: base, form: '复数/第三人称单数' };
+  }
+
+  // 4. -ed past tense (walked -> walk, liked -> like, stopped -> stop)
+  if (word.endsWith('ed') && word.length > 3) {
+    const base1 = word.slice(0, -2);
+    if (dictCheck(base1)) return { lemma: base1, form: '过去式/分词' };
+    const base2 = word.slice(0, -1); // liked -> like
+    if (dictCheck(base2)) return { lemma: base2, form: '过去式/分词' };
+    // double consonant: stopped -> stop, planned -> plan
+    if (word.length > 4 && word[word.length - 3] === word[word.length - 4]) {
+      const base3 = word.slice(0, -3);
+      if (dictCheck(base3)) return { lemma: base3, form: '过去式/分词' };
+    }
+  }
+
+  // 5. -ing gerund/participle (walking -> walk, making -> make, running -> run)
+  if (word.endsWith('ing') && word.length > 4) {
+    const base1 = word.slice(0, -3);
+    if (dictCheck(base1)) return { lemma: base1, form: '现在分词/动名词' };
+    const base2 = word.slice(0, -3) + 'e'; // making -> make
+    if (dictCheck(base2)) return { lemma: base2, form: '现在分词/动名词' };
+    // double consonant: running -> run, swimming -> swim
+    if (word.length > 5 && word[word.length - 4] === word[word.length - 5]) {
+      const base3 = word.slice(0, -4);
+      if (dictCheck(base3)) return { lemma: base3, form: '现在分词/动名词' };
+    }
+  }
+
+  // 6. -er / -est (faster -> fast, fastest -> fast, bigger -> big)
+  if (word.endsWith('er') && word.length > 4) {
+    const base1 = word.slice(0, -2);
+    if (dictCheck(base1)) return { lemma: base1, form: '比较级' };
+    const base2 = word.slice(0, -1);
+    if (dictCheck(base2)) return { lemma: base2, form: '比较级' };
+    if (word.length > 5 && word[word.length - 3] === word[word.length - 4]) {
+      const base3 = word.slice(0, -3);
+      if (dictCheck(base3)) return { lemma: base3, form: '比较级' };
+    }
+  }
+  if (word.endsWith('est') && word.length > 5) {
+    const base1 = word.slice(0, -3);
+    if (dictCheck(base1)) return { lemma: base1, form: '最高级' };
+    const base2 = word.slice(0, -2);
+    if (dictCheck(base2)) return { lemma: base2, form: '最高级' };
+  }
+
+  // 7. -ly adverb (quickly -> quick, happily -> happy)
+  if (word.endsWith('ly') && word.length > 4) {
+    const base1 = word.slice(0, -2);
+    if (dictCheck(base1)) return { lemma: base1, form: '副词' };
+    if (word.endsWith('ily') && word.length > 5) {
+      const base2 = word.slice(0, -3) + 'y';
+      if (dictCheck(base2)) return { lemma: base2, form: '副词' };
+    }
+  }
+
+  return null;
+}
+
 export class DictionaryService {
   private memoryCache: Map<string, OxfordDictEntry> = new Map();
 
@@ -57,11 +145,74 @@ export class DictionaryService {
   }
 
   /**
+   * Check if a word exists in Oxford/ECDICT or is a valid inflected form of a known word
+   */
+  isInDictionary(rawWord: string): boolean {
+    const clean = rawWord.trim().toLowerCase().replace(/[^a-z]/g, '');
+    if (!clean || clean.length < 2) return false;
+
+    // Check direct match in curated db or ECDICT
+    if (OXFORD_ECDICT_DATABASE[clean] !== undefined) return true;
+    if (ECDICT_MAP[clean] !== undefined) return true;
+
+    // Check memory cache (ensure not a fallback new-word entry)
+    if (this.memoryCache.has(clean)) {
+      const entry = this.memoryCache.get(clean);
+      if (entry && entry.def && !entry.def.includes('（新词汇）') && entry.def !== '新学单词') return true;
+    }
+
+    // Check 2-letter word whitelist
+    if (clean.length === 2) {
+      return VALID_2_LETTER_WORDS.has(clean);
+    }
+
+    // Check lemmatization / inflections
+    const lemmaInfo = findLemma(clean, (w) => ECDICT_MAP[w] !== undefined || OXFORD_ECDICT_DATABASE[w] !== undefined);
+    if (lemmaInfo) return true;
+
+    return false;
+  }
+
+  /**
+   * Detect whether an OCR candidate token is likely image noise / artifact
+   */
+  isNoiseWord(rawWord: string): boolean {
+    const clean = rawWord.trim().toLowerCase().replace(/[^a-z]/g, '');
+    if (!clean || clean.length < 2) return true;
+
+    // 1. If in dictionary, it's definitely a genuine word!
+    if (this.isInDictionary(clean)) return false;
+
+    // 2. 2-letter tokens: must be in 2-letter whitelist
+    if (clean.length === 2) {
+      return !VALID_2_LETTER_WORDS.has(clean);
+    }
+
+    // 3. No vowel check (a, e, i, o, u, y) -> 99.9% OCR line/texture noise like 'tt', 'ss', 'bdf'
+    if (!/[aeiouy]/.test(clean)) {
+      return true;
+    }
+
+    // 4. Repeated consecutive characters: 3 or more (e.g. 'aaa', 'sss', 'ttt')
+    if (/(.)\1\1/.test(clean)) {
+      return true;
+    }
+
+    // 5. Strange consonant clusters: 4+ consecutive consonants without vowel
+    if (/[bcdfghjklmnpqrstvwxyz]{4,}/.test(clean)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
    * Synchronous dictionary lookup:
    * 1. Curated Oxford/ECDICT database
    * 2. LocalStorage persistent cache
-   * 3. 16,000+ ECDICT Core Lexicon with Oxford 5000 authentic sentences
-   * 4. Morphological derivation
+   * 3. 16,000+ ECDICT Offline Lexicon with Oxford 5000 authentic sentences
+   * 4. Lemmatization (plural, past tense, gerund, etc.)
+   * 5. Morphological derivation
    */
   lookupSync(rawWord: string): OxfordDictEntry {
     const clean = rawWord.trim().toLowerCase().replace(/[^a-z]/g, '');
@@ -119,7 +270,23 @@ export class DictionaryService {
       return entry;
     }
 
-    // 4. Morphological & Affix Derivation Engine
+    // 4. Lemmatization fallback to known base word
+    const lemmaInfo = findLemma(clean, (w) => ECDICT_MAP[w] !== undefined || OXFORD_ECDICT_DATABASE[w] !== undefined);
+    if (lemmaInfo) {
+      const baseEntry = this.lookupSync(lemmaInfo.lemma);
+      const entry: OxfordDictEntry = {
+        word: clean,
+        pos: baseEntry.pos,
+        def: `${baseEntry.def} (${lemmaInfo.lemma}的${lemmaInfo.form})`,
+        ipa: baseEntry.ipa || `/${clean}/`,
+        example: baseEntry.example,
+        source: '牛津 / ECDICT 屈折词形还原',
+      };
+      this.memoryCache.set(clean, entry);
+      return entry;
+    }
+
+    // 5. Morphological & Affix Derivation Engine
     return this.deriveFromMorphology(clean);
   }
 

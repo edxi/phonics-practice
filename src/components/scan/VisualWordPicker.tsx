@@ -17,7 +17,7 @@ export const VisualWordPicker: React.FC<VisualWordPickerProps> = ({
 }) => {
   const [currentImageUrl, setCurrentImageUrl] = useState<string>(scanResult.imageUrl);
   const [boxes, setBoxes] = useState<ScannedWordBox[]>(scanResult.boxes);
-  const [filterMode, setFilterMode] = useState<'all' | 'selected' | 'phonics'>('all');
+  const [filterMode, setFilterMode] = useState<'all' | 'selected' | 'dictionary' | 'phonics'>('all');
   const [showTitleModal, setShowTitleModal] = useState<boolean>(false);
   const [customTitle, setCustomTitle] = useState<string>('我的绘本拼读练习集');
 
@@ -72,6 +72,17 @@ export const VisualWordPicker: React.FC<VisualWordPickerProps> = ({
     setBoxes((prev) => prev.filter((b) => b.id !== id));
   };
 
+  // Select dictionary words only
+  const handleSelectDictOnly = () => {
+    speechService.playClickSound();
+    setBoxes((prev) =>
+      prev.map((b) => ({
+        ...b,
+        selected: b.inDictionary !== false,
+      }))
+    );
+  };
+
   // Toggle all selection
   const allSelected = boxes.length > 0 && boxes.every((b) => b.selected);
   const handleToggleSelectAll = () => {
@@ -100,6 +111,7 @@ export const VisualWordPicker: React.FC<VisualWordPickerProps> = ({
       height: 9,
       confidence: 1.0,
       selected: true,
+      inDictionary: true,
       definition: '手动添加生词',
       level: 'phonics'
     }));
@@ -178,8 +190,11 @@ export const VisualWordPicker: React.FC<VisualWordPickerProps> = ({
   const selectedCount = boxes.filter((b) => b.selected).length;
   const selectedWords = boxes.filter((b) => b.selected).map((b) => b.cleanWord);
 
+  const dictWordsCount = boxes.filter((b) => b.inDictionary !== false).length;
+
   const displayedBoxes = boxes.filter((b) => {
     if (filterMode === 'selected') return b.selected;
+    if (filterMode === 'dictionary') return b.inDictionary !== false;
     if (filterMode === 'phonics') return b.level === 'phonics';
     return true;
   });
@@ -217,6 +232,13 @@ export const VisualWordPicker: React.FC<VisualWordPickerProps> = ({
             className="text-xs font-bold text-[#6d54f5] hover:underline flex items-center gap-0.5"
           >
             <Plus className="w-3.5 h-3.5" /> 加词
+          </button>
+          <button
+            onClick={handleSelectDictOnly}
+            className="text-xs font-bold text-[#6d54f5] hover:text-[#5b40ee] bg-purple-50 hover:bg-purple-100 px-2 py-1 rounded-md transition-all active:scale-95"
+            title="仅选中词典收录的真实单词"
+          >
+            选词典词
           </button>
           <button
             onClick={handleToggleSelectAll}
@@ -355,6 +377,16 @@ export const VisualWordPicker: React.FC<VisualWordPickerProps> = ({
             已选中 ({selectedCount})
           </button>
           <button
+            onClick={() => setFilterMode('dictionary')}
+            className={`px-3 py-1 rounded-full text-xs font-bold transition-all shrink-0 ${
+              filterMode === 'dictionary'
+                ? 'bg-[#6d54f5] text-white'
+                : 'bg-white text-slate-600 border border-slate-200'
+            }`}
+          >
+            词典收录 ({dictWordsCount})
+          </button>
+          <button
             onClick={() => setFilterMode('phonics')}
             className={`px-3 py-1 rounded-full text-xs font-bold transition-all shrink-0 ${
               filterMode === 'phonics'
@@ -431,6 +463,11 @@ export const VisualWordPicker: React.FC<VisualWordPickerProps> = ({
                     <span className="text-base font-extrabold text-slate-800">
                       {item.word}
                     </span>
+                    {item.inDictionary === false && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-400 font-semibold">
+                        未收录
+                      </span>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

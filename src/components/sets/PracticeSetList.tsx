@@ -1,13 +1,17 @@
-import React from 'react';
-import { Camera, BookOpen, Sparkles, ChevronRight, Play } from 'lucide-react';
+import React, { useState } from 'react';
+import { Camera, BookOpen, Sparkles, ChevronRight, Play, Edit3, Trash2 } from 'lucide-react';
 import type { PracticeSet } from '../../types/phonics';
 import { UserProfileMenu } from '../auth/UserProfileMenu';
+import { EditPracticeSetModal } from './EditPracticeSetModal';
+import { ConfirmDeleteModal } from './ConfirmDeleteModal';
 
 interface PracticeSetListProps {
   sets: PracticeSet[];
   onSelectSet: (set: PracticeSet) => void;
   onStartScan: () => void;
   onOpenAuth: () => void;
+  onUpdateSet?: (set: PracticeSet) => void;
+  onDeleteSet?: (setId: string) => void;
   syncStatus?: 'synced' | 'syncing' | 'offline';
 }
 
@@ -16,8 +20,12 @@ export const PracticeSetList: React.FC<PracticeSetListProps> = ({
   onSelectSet,
   onStartScan,
   onOpenAuth,
+  onUpdateSet,
+  onDeleteSet,
   syncStatus = 'synced',
 }) => {
+  const [editingSet, setEditingSet] = useState<PracticeSet | null>(null);
+  const [deletingSet, setDeletingSet] = useState<PracticeSet | null>(null);
   return (
     <div className="flex-1 flex flex-col justify-between bg-[#f8f7fe] select-none">
       {/* Header */}
@@ -102,10 +110,34 @@ export const PracticeSetList: React.FC<PracticeSetListProps> = ({
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-between gap-2">
                       <h3 className="text-base font-bold text-slate-900">
                         {set.title}
                       </h3>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingSet(set);
+                          }}
+                          className="w-7 h-7 rounded-xl text-slate-400 hover:text-[#6d54f5] hover:bg-purple-50 flex items-center justify-center transition-all cursor-pointer"
+                          title="编辑练习集"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeletingSet(set);
+                          }}
+                          className="w-7 h-7 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 flex items-center justify-center transition-all cursor-pointer"
+                          title="删除练习集"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">
                       {set.description}
@@ -172,6 +204,30 @@ export const PracticeSetList: React.FC<PracticeSetListProps> = ({
           <span>相机扫词</span>
         </button>
       </div>
+
+      {/* Edit Practice Set Modal */}
+      <EditPracticeSetModal
+        set={editingSet}
+        isOpen={!!editingSet}
+        onClose={() => setEditingSet(null)}
+        onSave={(updated) => {
+          onUpdateSet?.(updated);
+          setEditingSet(null);
+        }}
+      />
+
+      {/* Confirm Delete Modal */}
+      <ConfirmDeleteModal
+        set={deletingSet}
+        isOpen={!!deletingSet}
+        onClose={() => setDeletingSet(null)}
+        onConfirm={() => {
+          if (deletingSet) {
+            onDeleteSet?.(deletingSet.id);
+            setDeletingSet(null);
+          }
+        }}
+      />
     </div>
   );
 };

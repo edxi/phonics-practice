@@ -149,6 +149,28 @@ function MainApp() {
     setCurrentScreen('learn');
   };
 
+  const handleUpdatePracticeSet = async (updatedSet: PracticeSet) => {
+    await storageService.saveSingleSet(updatedSet, user?.id);
+    const refreshed = storageService.getPracticeSets(user?.id);
+    setSets(refreshed);
+    if (currentSet?.id === updatedSet.id) {
+      setCurrentSet(updatedSet);
+      if (currentWordIndex >= updatedSet.words.length) {
+        setCurrentWordIndex(Math.max(0, updatedSet.words.length - 1));
+      }
+    }
+  };
+
+  const handleDeletePracticeSet = async (setId: string) => {
+    await storageService.deletePracticeSet(setId, user?.id);
+    const refreshed = storageService.getPracticeSets(user?.id);
+    setSets(refreshed);
+    if (currentSet?.id === setId) {
+      setCurrentSet(refreshed.length > 0 ? refreshed[0] : null);
+      setCurrentWordIndex(0);
+    }
+  };
+
   return (
     <MobileFrame
       activeScreen={currentScreen}
@@ -167,6 +189,8 @@ function MainApp() {
           }}
           onStartScan={() => setCurrentScreen('scanner')}
           onOpenAuth={() => setIsAuthModalOpen(true)}
+          onUpdateSet={handleUpdatePracticeSet}
+          onDeleteSet={handleDeletePracticeSet}
           syncStatus={syncStatus}
         />
       )}

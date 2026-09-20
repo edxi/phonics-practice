@@ -54,8 +54,11 @@ function sanitizePracticeSet(set: PracticeSet): { set: PracticeSet; changed: boo
     const isDummyPhonics = w.phonicsUnits.length <= 1 && w.word.length >= 4;
     const isDummySyllables = w.syllables.length <= 1 && w.word.length >= 5;
     const isDummyIpa = !w.ipa || w.ipa === `/${w.word}/`;
+    const isDummyExample = !w.spokenExample ||
+      w.spokenExample.en.includes('Can you read and practice') ||
+      w.spokenExample.en.includes('Can you read and remember');
 
-    if (isDummyDef || isDummyPhonics || isDummySyllables || isDummyIpa) {
+    if (isDummyDef || isDummyPhonics || isDummySyllables || isDummyIpa || isDummyExample) {
       changed = true;
       const fresh = createWordItem(w.word);
       return {
@@ -66,7 +69,7 @@ function sanitizePracticeSet(set: PracticeSet): { set: PracticeSet; changed: boo
         syllables: fresh.syllables,
         phonicsUnits: fresh.phonicsUnits,
         rootAffix: fresh.rootAffix || w.rootAffix,
-        spokenExample: fresh.spokenExample || w.spokenExample,
+        spokenExample: (!w.spokenExample || isDummyExample) ? fresh.spokenExample : w.spokenExample,
         detail: fresh.detail || w.detail,
       };
     }

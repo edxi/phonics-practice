@@ -1,12 +1,50 @@
-// Open-Source Dictionary Service (Oxford 3000™ + ECDICT 16000+ Core Lexicon + Morphology)
+// Open-Source Dictionary Service (Oxford 3000™ + ECDICT 16000+ Core Lexicon + Wiktionary + Morphology)
 import { OXFORD_ECDICT_DATABASE, type OxfordDictEntry } from '../data/oxfordDictionary';
 import ecdictData from '../data/ecdictCompact.json';
+import oxfordSentencesData from '../data/oxfordSentences.json';
 import type { WordItem } from '../types/phonics';
 
 const CACHE_KEY_PREFIX = 'phonics_dict_cache_';
 
 // 16,591 Core Words dictionary
 const ECDICT_MAP = ecdictData as unknown as Record<string, [string, string, string]>;
+// 4,900+ Oxford 5000 authentic example sentences
+const OXFORD_SENTENCES = oxfordSentencesData as unknown as Record<string, string>;
+
+function extractFirstMeaning(def: string): string {
+  if (!def) return '';
+  const cleanDef = def.replace(/^[a-z]+\.\s*/i, '').trim();
+  const first = cleanDef.split(/[,，;；\n/]/)[0]?.trim();
+  return first || cleanDef;
+}
+
+function generateNaturalFallbackExample(clean: string, pos: string, def: string): { en: string; zh: string } {
+  const meaning = extractFirstMeaning(def) || clean;
+  const p = pos.toLowerCase();
+
+  if (p.includes('v')) {
+    return {
+      en: `They plan to ${clean} the new process carefully.`,
+      zh: `他们计划认真${meaning}这一新流程。`,
+    };
+  }
+  if (p.includes('adj')) {
+    return {
+      en: `The modern design is remarkably ${clean}.`,
+      zh: `这一现代设计非常${meaning}。`,
+    };
+  }
+  if (p.includes('adv')) {
+    return {
+      en: `They completed the task ${clean}.`,
+      zh: `他们${meaning}地完成了这项任务。`,
+    };
+  }
+  return {
+    en: `The ${clean} plays an important role in daily life.`,
+    zh: `这种${meaning}在日常生活中起着重要作用。`,
+  };
+}
 
 export class DictionaryService {
   private memoryCache: Map<string, OxfordDictEntry> = new Map();
@@ -21,8 +59,8 @@ export class DictionaryService {
   /**
    * Synchronous dictionary lookup:
    * 1. Curated Oxford/ECDICT database
-   * 2. 16,000+ ECDICT Core offline Lexicon
-   * 3. LocalStorage persistent cache
+   * 2. LocalStorage persistent cache
+   * 3. 16,000+ ECDICT Core Lexicon with Oxford 5000 authentic sentences
    * 4. Morphological derivation
    */
   lookupSync(rawWord: string): OxfordDictEntry {
@@ -33,35 +71,52 @@ export class DictionaryService {
       return this.memoryCache.get(clean)!;
     }
 
-    // 2. 16,000+ ECDICT Offline Lexicon (0ms instant lookup)
+    // 2. LocalStorage Persistent Cache
+    try {
+      const cached = localStorage.getItem(`${CACHE_KEY_PREFIX}${clean}`);
+      if (cached) {
+        const parsed: OxfordDictEntry = JSON.parse(cached);
+        // Only return from localStorage if it does not contain legacy placeholder sentence
+        if (!parsed.example?.en?.includes('Can you read and practice') && !parsed.example?.en?.includes('Can you read and remember')) {
+          this.memoryCache.set(clean, parsed);
+          return parsed;
+        }
+      }
+    } catch {
+      // Ignore localStorage errors
+    }
+
+    // 3. 16,000+ ECDICT Offline Lexicon (0ms instant lookup)
     if (ECDICT_MAP[clean]) {
       const [ipa, rawPos, def] = ECDICT_MAP[clean];
       const pos = rawPos || 'n.';
+      
+      // Match with Oxford 5000 example sentences if available
+      let example: { en: string; zh: string };
+      let source = '牛津 3000 / ECDICT 开源词库';
+
+      if (OXFORD_SENTENCES[clean]) {
+        const oxfordEx = OXFORD_SENTENCES[clean];
+        const meaning = extractFirstMeaning(def);
+        example = {
+          en: oxfordEx,
+          zh: meaning ? `（与“${meaning}”相关的实际用法）` : '牛津原版双语例句',
+        };
+        source = '牛津核心原版词典例句';
+      } else {
+        example = generateNaturalFallbackExample(clean, pos, def);
+      }
+
       const entry: OxfordDictEntry = {
         word: clean,
         pos,
         def,
         ipa: ipa || `/${clean}/`,
-        example: {
-          en: `Can you read and practice the word "${clean}"?`,
-          zh: `你能大声朗读并练习单词 "${clean}" 吗？`,
-        },
-        source: '牛津 3000 / ECDICT 开源词库',
+        example,
+        source,
       };
       this.memoryCache.set(clean, entry);
       return entry;
-    }
-
-    // 3. LocalStorage Persistent Cache
-    try {
-      const cached = localStorage.getItem(`${CACHE_KEY_PREFIX}${clean}`);
-      if (cached) {
-        const parsed: OxfordDictEntry = JSON.parse(cached);
-        this.memoryCache.set(clean, parsed);
-        return parsed;
-      }
-    } catch {
-      // Ignore localStorage errors
     }
 
     // 4. Morphological & Affix Derivation Engine
@@ -69,46 +124,158 @@ export class DictionaryService {
   }
 
   /**
-   * Asynchronous dictionary lookup: queries translation API if not in offline dictionary
+   * Asynchronous dictionary lookup:
+   * Enriches definition, authentic example sentence from Wiktionary/Oxford and Chinese translation
    */
   async lookupAsync(rawWord: string): Promise<OxfordDictEntry> {
     const clean = rawWord.trim().toLowerCase().replace(/[^a-z]/g, '');
-    const localResult = this.lookupSync(clean);
+    let current = this.lookupSync(clean);
 
-    // If already sourced from Oxford 3000 / ECDICT, return immediately!
-    if (localResult.source.includes('Oxford') || localResult.source.includes('ECDICT')) {
-      return localResult;
+    // If entry is already from curated DB and has high quality example, return immediately
+    const isCurated = OXFORD_ECDICT_DATABASE[clean] !== undefined;
+    const hasAuthenticEx = current.example &&
+      !current.example.en.includes('Can you read') &&
+      !current.example.en.includes('important role in daily life') &&
+      !current.example.en.includes('new process carefully') &&
+      current.example.zh &&
+      !current.example.zh.includes('相关的实际用法');
+
+    if (isCurated && hasAuthenticEx) {
+      return current;
     }
 
-    // 5. Try online translation API (MyMemory) for words outside the 16,000 core words
+    // 1. Try to find/translate authentic sentence
+    try {
+      let targetSentenceEn: string | null = null;
+      let targetSource = current.source;
+
+      // Check Oxford 5000 first
+      if (OXFORD_SENTENCES[clean]) {
+        targetSentenceEn = OXFORD_SENTENCES[clean];
+        targetSource = '牛津核心原版词典例句';
+      } else {
+        // Query Wiktionary REST API (global CORS enabled, authentic dictionary examples)
+        const wiktionaryEx = await this.fetchWiktionaryExample(clean);
+        if (wiktionaryEx) {
+          targetSentenceEn = wiktionaryEx;
+          targetSource = 'Wiktionary 维基词典';
+        }
+      }
+
+      if (targetSentenceEn) {
+        // Translate example sentence to Chinese via MyMemory
+        const translatedZh = await this.translateText(targetSentenceEn);
+        if (translatedZh) {
+          current = {
+            ...current,
+            example: {
+              en: targetSentenceEn,
+              zh: translatedZh,
+            },
+            source: targetSource,
+          };
+          this.saveToCache(clean, current);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to enrich example sentence asynchronously', e);
+    }
+
+    // 2. If definition is still default, try MyMemory for definition
+    if (!current.def || current.def.includes('（新词汇）') || current.def === '新学单词') {
+      try {
+        const translatedDef = await this.translateText(clean);
+        if (translatedDef && translatedDef.toLowerCase() !== clean) {
+          current = {
+            ...current,
+            def: translatedDef,
+            source: '在线英汉词典',
+          };
+          this.saveToCache(clean, current);
+        }
+      } catch {
+        // Ignore
+      }
+    }
+
+    return current;
+  }
+
+  /**
+   * Fetch authentic example sentences from Wiktionary REST API
+   */
+  private async fetchWiktionaryExample(clean: string): Promise<string | null> {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
 
       const res = await fetch(
-        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(clean)}&langpair=en|zh-CN`,
+        `https://en.wiktionary.org/api/rest_v1/page/definition/${encodeURIComponent(clean)}`,
         { signal: controller.signal }
       );
       clearTimeout(timeoutId);
 
-      if (res.ok) {
-        const data = await res.json();
-        const translation = data.responseData?.translatedText;
-        if (translation && translation.toLowerCase() !== clean) {
-          const enriched: OxfordDictEntry = {
-            ...localResult,
-            def: translation,
-            source: '在线英汉词库',
-          };
-          this.saveToCache(clean, enriched);
-          return enriched;
+      if (!res.ok) return null;
+      const data = await res.json();
+      const enSections = data.en;
+      if (!Array.isArray(enSections)) return null;
+
+      const candidates: string[] = [];
+      for (const sec of enSections) {
+        if (!sec.definitions) continue;
+        for (const def of sec.definitions) {
+          const list = [...(def.parsedExamples || []), ...(def.examples || [])];
+          for (const item of list) {
+            const raw = (typeof item === 'string' ? item : item.example || '')
+              .replace(/<[^>]+>/g, '')
+              .trim();
+            if (
+              raw.toLowerCase().includes(clean) &&
+              !raw.startsWith('19') &&
+              !raw.startsWith('20') &&
+              raw.split(' ').length >= 4
+            ) {
+              candidates.push(raw);
+            }
+          }
         }
       }
-    } catch {
-      // Graceful fallback to localResult
-    }
 
-    return localResult;
+      // Prioritize full sentences with punctuation between 18 and 120 chars
+      const best =
+        candidates.find((c) => /[.!?]$/.test(c) && c.length >= 18 && c.length <= 120) ||
+        candidates[0];
+
+      return best || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Translate English text to Chinese via MyMemory
+   */
+  private async translateText(text: string): Promise<string | null> {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+      const res = await fetch(
+        `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|zh-CN`,
+        { signal: controller.signal }
+      );
+      clearTimeout(timeoutId);
+
+      if (!res.ok) return null;
+      const data = await res.json();
+      const translated = data.responseData?.translatedText;
+      if (translated && typeof translated === 'string' && translated.trim().length > 0) {
+        return translated.trim();
+      }
+    } catch {
+      // Ignore
+    }
+    return null;
   }
 
   /**
@@ -155,8 +322,8 @@ export class DictionaryService {
           desc: `源自词根 ${stem} + 后缀 -${clean.slice(stem.length)} (相关的)`,
         },
         example: {
-          en: `The word "${clean}" is an important descriptive word.`,
-          zh: `单词 "${clean}" 是一个重要的描述性词汇。`,
+          en: `The findings are ${clean} to the research.`,
+          zh: `这些发现对该研究非常关键。`,
         },
         source: 'ECDICT 形态学派生词',
       };
@@ -201,15 +368,15 @@ export class DictionaryService {
       };
     }
 
-    // 4. Default fallback entry - NOTE: Do not populate dummy syllables/phonics here!
+    // 4. Default fallback entry
     return {
       word: clean,
       pos: 'n./v.',
       def: `${clean}（新词汇）`,
       ipa: `/${clean}/`,
       example: {
-        en: `Can you read and practice the word "${clean}"?`,
-        zh: `你能大声朗读并练习单词 "${clean}" 吗？`,
+        en: `The word "${clean}" is important in this context.`,
+        zh: `单词 "${clean}" 在当前语境中非常重要。`,
       },
       source: '开源词库解析',
     };
@@ -217,3 +384,4 @@ export class DictionaryService {
 }
 
 export const dictionaryService = new DictionaryService();
+

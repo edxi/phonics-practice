@@ -312,8 +312,8 @@ export function createWordItem(rawWord: string): WordItem {
   }
 
   const spokenExample = dict.example || {
-    en: `Can you read and remember the word "${clean}"?`,
-    zh: `你能读准并记住单词 "${clean}" 吗？`
+    en: `The word "${clean}" is important in this context.`,
+    zh: `单词 "${clean}" 在当前语境中非常重要。`
   };
 
   const item: WordItem = {

@@ -14,8 +14,6 @@
     "cap:android": "bun run cap:sync && cap open android"
   },
   "dependencies": {
-    "@capacitor-community/speech-recognition": "^7.0.1",
-    "@capacitor-community/text-to-speech": "^8.0.2",
     "@capacitor/core": "^8.5.2",
     "@supabase/supabase-js": "^2.116.0",
     "@vercel/analytics": "^2.0.1",

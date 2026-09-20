@@ -31,10 +31,10 @@ jobs:
       - name: Sync Capacitor iOS
         run: bunx cap sync ios
 
-      - name: Build iOS Workspace (Validation Build)
+      - name: Build iOS Project (Validation Build)
         run: |
           cd ios/App
-          xcodebuild -workspace App.xcworkspace \
+          xcodebuild -project App.xcodeproj \
             -scheme App \
             -configuration Release \
             -destination 'generic/platform=iOS' \

@@ -4,7 +4,7 @@ import { dictionaryService } from '../services/dictionaryService';
 
 // Common phonics grapheme map
 const PHONICS_PATTERNS: { pattern: RegExp; phoneme: string; type: PhonicsUnit['type'] }[] = [
-  // Special multi-letter phonograms & endings (crucial for words like judicial, crucial, beneficial)
+  // Special multi-letter phonograms & endings
   { pattern: /^cial$/i, phoneme: '/ʃəl/', type: 'digraph' },
   { pattern: /^tial$/i, phoneme: '/ʃəl/', type: 'digraph' },
   { pattern: /^cian$/i, phoneme: '/ʃən/', type: 'digraph' },
@@ -20,14 +20,21 @@ const PHONICS_PATTERNS: { pattern: RegExp; phoneme: string; type: PhonicsUnit['t
   { pattern: /^ment$/i, phoneme: '/mənt/', type: 'digraph' },
   { pattern: /^ness$/i, phoneme: '/nəs/', type: 'digraph' },
 
+  // Word-final silent E consonant combinations (e.g. starve -> st-ar-ve, dance -> d-an-ce)
+  { pattern: /^ve$/i, phoneme: '/v/', type: 'consonant' },
+  { pattern: /^ce$/i, phoneme: '/s/', type: 'consonant' },
+  { pattern: /^ge$/i, phoneme: '/dʒ/', type: 'consonant' },
+  { pattern: /^se$/i, phoneme: '/s/', type: 'consonant' },
+  { pattern: /^ze$/i, phoneme: '/z/', type: 'consonant' },
+  { pattern: /^te$/i, phoneme: '/t/', type: 'consonant' },
+  { pattern: /^le$/i, phoneme: '/l/', type: 'consonant' },
+
   // Special digraphs & soft consonants
   { pattern: /^dge$/i, phoneme: '/dʒ/', type: 'digraph' },
   { pattern: /^tch$/i, phoneme: '/tʃ/', type: 'digraph' },
   { pattern: /^igh$/i, phoneme: '/aɪ/', type: 'digraph' },
   { pattern: /^eigh$/i, phoneme: '/eɪ/', type: 'digraph' },
   { pattern: /^eau$/i, phoneme: '/juː/', type: 'digraph' },
-  { pattern: /^ce$/i, phoneme: '/s/', type: 'consonant' },
-  { pattern: /^ge$/i, phoneme: '/dʒ/', type: 'consonant' },
 
   // R-controlled vowels
   { pattern: /^are$/i, phoneme: '/er/', type: 'r-controlled' },
@@ -51,7 +58,6 @@ const PHONICS_PATTERNS: { pattern: RegExp; phoneme: string; type: PhonicsUnit['t
   { pattern: /^oo$/i, phoneme: '/uː/', type: 'digraph' },
   { pattern: /^oi$/i, phoneme: '/ɔɪ/', type: 'digraph' },
   { pattern: /^oy$/i, phoneme: '/ɔɪ/', type: 'digraph' },
-  { pattern: /^igh$/i, phoneme: '/aɪ/', type: 'digraph' },
 
   // Consonant Digraphs
   { pattern: /^sh$/i, phoneme: '/ʃ/', type: 'digraph' },
@@ -70,6 +76,11 @@ const PHONICS_PATTERNS: { pattern: RegExp; phoneme: string; type: PhonicsUnit['t
   { pattern: /^zz$/i, phoneme: '/z/', type: 'consonant' },
   { pattern: /^tt$/i, phoneme: '/t/', type: 'consonant' },
   { pattern: /^pp$/i, phoneme: '/p/', type: 'consonant' },
+  { pattern: /^bb$/i, phoneme: '/b/', type: 'consonant' },
+  { pattern: /^dd$/i, phoneme: '/d/', type: 'consonant' },
+  { pattern: /^gg$/i, phoneme: '/ɡ/', type: 'consonant' },
+  { pattern: /^mm$/i, phoneme: '/m/', type: 'consonant' },
+  { pattern: /^nn$/i, phoneme: '/n/', type: 'consonant' },
 
   // Consonant Blends
   { pattern: /^bl$/i, phoneme: '/bl/', type: 'blend' },
@@ -109,7 +120,7 @@ const PHONICS_PATTERNS: { pattern: RegExp; phoneme: string; type: PhonicsUnit['t
   { pattern: /^c$/i, phoneme: '/k/', type: 'consonant' },
   { pattern: /^d$/i, phoneme: '/d/', type: 'consonant' },
   { pattern: /^f$/i, phoneme: '/f/', type: 'consonant' },
-  { pattern: /^g$/i, phoneme: '/g/', type: 'consonant' },
+  { pattern: /^g$/i, phoneme: '/ɡ/', type: 'consonant' },
   { pattern: /^h$/i, phoneme: '/h/', type: 'consonant' },
   { pattern: /^j$/i, phoneme: '/dʒ/', type: 'consonant' },
   { pattern: /^k$/i, phoneme: '/k/', type: 'consonant' },
@@ -126,63 +137,93 @@ const PHONICS_PATTERNS: { pattern: RegExp; phoneme: string; type: PhonicsUnit['t
   { pattern: /^z$/i, phoneme: '/z/', type: 'consonant' }
 ];
 
+// Specific known word syllable dictionary
+const KNOWN_SYLLABLES: Record<string, string[]> = {
+  'family': ['fam', 'i', 'ly'],
+  'official': ['of', 'fi', 'cial'],
+  'transfer': ['trans', 'fer'],
+  'manager': ['man', 'ag', 'er'],
+  'serve': ['serve'],
+  'starve': ['starve'],
+  'ale': ['ale'],
+  'careless': ['care', 'less'],
+  'clever': ['clev', 'er'],
+  'polite': ['po', 'lite'],
+  'quiet': ['qui', 'et'],
+  'cute': ['cute'],
+  'friendly': ['friend', 'ly'],
+  'banana': ['ba', 'nan', 'a'],
+  'apple': ['ap', 'ple'],
+  'little': ['lit', 'tle'],
+  'water': ['wa', 'ter'],
+  'happy': ['hap', 'py'],
+};
+
 /**
- * Split word into syllables heuristically
+ * Split word into syllables heuristically following English syllabification rules
  */
 export function splitSyllables(rawWord: string): SyllableUnit[] {
-  const word = rawWord.toLowerCase();
-  
-  // 1. Check preset dictionary
+  const word = rawWord.toLowerCase().trim();
+
+  // 1. Check specific known words
+  if (KNOWN_SYLLABLES[word]) {
+    return KNOWN_SYLLABLES[word].map((part, idx) => ({
+      text: part,
+      phoneticPart: part,
+      color: idx % 2 === 0 ? '#ff7b39' : '#6d54f5',
+    }));
+  }
+
+  // 2. Check preset sample words
   const found = SAMPLE_WORDS.find(w => w.word.toLowerCase() === word);
   if (found) {
     return found.syllables;
   }
 
-  // 2. Check Oxford 3000 / ECDICT dictionary ONLY if multi-syllables
+  // 3. Check Oxford 3000 / ECDICT dictionary ONLY if multi-syllables
   const dict = dictionaryService.lookupSync(word);
   if (dict.syllables && dict.syllables.length > 1) {
     return dict.syllables;
   }
 
-  // 3. Common affixes & word endings to split
+  // 4. Words ending in silent E (e.g. ale, starve, cake, time) are 1 syllable
+  if (/^[bcdfghjklmnpqrstvwxyz]*[aeiou][bcdfghjklmnpqrstvwxyz]+e$/i.test(word)) {
+    return [{ text: word, phoneticPart: word, color: '#ff7b39' }];
+  }
+
+  // 5. Common prefixes and suffixes to split
+  const prefixes = ['trans', 'inter', 'super', 'anti', 'over', 'under', 'dis', 'pre', 'pro', 'sub', 'un', 're', 'in', 'im'];
+  for (const pre of prefixes) {
+    if (word.startsWith(pre) && word.length > pre.length + 2) {
+      const rest = word.slice(pre.length);
+      return [
+        { text: pre, phoneticPart: pre, color: '#ff7b39' },
+        { text: rest, phoneticPart: rest, color: '#6d54f5' },
+      ];
+    }
+  }
+
   const suffixes = [
     'cial', 'tial', 'cian', 'cious', 'tious', 'ture', 'sure', 'tion', 'sion',
-    'less', 'ful', 'ing', 'ed', 'ly', 'er', 'est', 'ness', 'ment', 'able', 'ible'
+    'less', 'ful', 'ness', 'ment', 'able', 'ible', 'ing', 'est', 'ly'
   ];
   for (const suf of suffixes) {
     if (word.endsWith(suf) && word.length > suf.length + 2) {
       const stem = word.slice(0, word.length - suf.length);
       return [
         { text: stem, phoneticPart: stem, color: '#ff7b39' },
-        { text: suf, phoneticPart: suf, color: '#475569' }
+        { text: suf, phoneticPart: suf, color: '#6d54f5' },
       ];
     }
   }
 
-  // Rule-based vowel-consonant split
-  const vowelRegex = /[aeiouy]+/g;
-  const vowelMatches = [...word.matchAll(vowelRegex)];
-
-  if (vowelMatches.length <= 1) {
-    return [{ text: word, phoneticPart: word, color: '#ff7b39' }];
-  }
-
-  // Split around middle consonants
-  const midIndex = Math.floor(word.length / 2);
-  let cut = midIndex;
-
-  for (let i = 1; i < word.length - 1; i++) {
-    const isVowel1 = /[aeiouy]/.test(word[i - 1]);
-    const isVowel2 = /[aeiouy]/.test(word[i]);
-    if (!isVowel1 && !isVowel2 && Math.abs(i - midIndex) < Math.abs(cut - midIndex)) {
-      cut = i;
-    }
-  }
-
-  if (cut > 1 && cut < word.length - 1) {
+  // Double consonant split (e.g. ap-ple, hap-py, let-ter, of-fi-ce)
+  const doubleConsonantMatch = word.match(/([aeiouy])([bcdfghjklmnpqrstvwxyz])\2([aeiouy])/i);
+  if (doubleConsonantMatch && doubleConsonantMatch.index !== undefined) {
+    const cutIdx = doubleConsonantMatch.index + 2;
     return [
-      { text: word.slice(0, cut), phoneticPart: word.slice(0, cut), color: '#ff7b39' },
-      { text: word.slice(cut), phoneticPart: word.slice(cut), color: '#475569' }
+      { text: word.slice(0, cutIdx), phoneticPart: word.slice(0, cutIdx), color: '#ff7b39' },
+      { text: word.slice(cutIdx), phoneticPart: word.slice(cutIdx), color: '#6d54f5' },
     ];
   }
 
@@ -193,7 +234,7 @@ export function splitSyllables(rawWord: string): SyllableUnit[] {
  * Decompose word into phonics grapheme-phoneme units
  */
 export function decomposePhonics(rawWord: string): PhonicsUnit[] {
-  const word = rawWord.toLowerCase();
+  const word = rawWord.toLowerCase().trim();
 
   // 1. Check preset dictionary first
   const found = SAMPLE_WORDS.find(w => w.word.toLowerCase() === word);
@@ -207,17 +248,72 @@ export function decomposePhonics(rawWord: string): PhonicsUnit[] {
     return dict.phonicsUnits;
   }
 
+  // 3. Silent E (Magic E) Rule: CVCe pattern (e.g. ale, cake, bike, home, cute, lake, time)
+  // [consonant*][vowel][consonant]e
+  const magicEMatch = word.match(/^([bcdfghjklmnpqrstvwxyz]*)([aeiou])([bcdfghjklmnpqrstvwxyz])e$/i);
+  if (magicEMatch) {
+    const [, initialCons, vowel, midCons] = magicEMatch;
+    const units: PhonicsUnit[] = [];
+
+    // Initial consonant (if any)
+    if (initialCons) {
+      const matchPattern = PHONICS_PATTERNS.find(p => p.pattern.test(initialCons));
+      units.push({
+        letters: initialCons,
+        phoneme: matchPattern ? matchPattern.phoneme : `/${initialCons}/`,
+        type: 'consonant'
+      });
+    }
+
+    // Long vowel sound caused by magic E
+    const longVowelMap: Record<string, string> = {
+      'a': '/eɪ/',
+      'e': '/iː/',
+      'i': '/aɪ/',
+      'o': '/oʊ/',
+      'u': '/juː/',
+    };
+
+    units.push({
+      letters: vowel,
+      phoneme: longVowelMap[vowel] || `/${vowel}/`,
+      type: 'vowel'
+    });
+
+    // Middle consonant
+    const consPattern = PHONICS_PATTERNS.find(p => p.pattern.test(midCons));
+    units.push({
+      letters: midCons,
+      phoneme: consPattern ? consPattern.phoneme : `/${midCons}/`,
+      type: 'consonant'
+    });
+
+    // Silent E at end
+    units.push({
+      letters: 'e',
+      phoneme: '∅',
+      type: 'silent'
+    });
+
+    return units;
+  }
+
   const units: PhonicsUnit[] = [];
   let remaining = word;
 
   while (remaining.length > 0) {
     let matched = false;
 
+    const silentEEndings = ['ve', 'ce', 'ge', 'se', 'ze', 'te', 'le'];
+
     // Try matching longest chunk first
     for (const p of PHONICS_PATTERNS) {
-      // Test match from start
       const m = remaining.match(p.pattern);
       if (m && m.index === 0) {
+        // Silent-e endings only apply at the end of the word
+        if (silentEEndings.includes(m[0]) && remaining.length !== m[0].length) {
+          continue;
+        }
         units.push({
           letters: m[0],
           phoneme: p.phoneme,
@@ -230,10 +326,12 @@ export function decomposePhonics(rawWord: string): PhonicsUnit[] {
     }
 
     if (!matched) {
-      // Try 3-letter, 2-letter, 1-letter prefix matching in patterns
       let subMatched = false;
       for (let len = Math.min(remaining.length, 3); len >= 1; len--) {
         const sub = remaining.slice(0, len);
+        if (silentEEndings.includes(sub) && remaining.length !== sub.length) {
+          continue;
+        }
         const matchPattern = PHONICS_PATTERNS.find(p => p.pattern.test(sub));
         if (matchPattern) {
           units.push({
@@ -268,8 +366,7 @@ export function decomposePhonics(rawWord: string): PhonicsUnit[] {
  */
 export function createWordItem(rawWord: string): WordItem {
   const clean = rawWord.trim().toLowerCase().replace(/[^a-z]/g, '');
-  
-  // Check preset library
+
   const preset = SAMPLE_WORDS.find(w => w.word.toLowerCase() === clean);
   if (preset) {
     return { ...preset, id: `w-${clean}-${Date.now()}` };
@@ -278,59 +375,21 @@ export function createWordItem(rawWord: string): WordItem {
   const dict = dictionaryService.lookupSync(clean);
   const syllables = (dict.syllables && dict.syllables.length > 1) ? dict.syllables : splitSyllables(clean);
   const phonicsUnits = (dict.phonicsUnits && dict.phonicsUnits.length > 1) ? dict.phonicsUnits : decomposePhonics(clean);
-  
-  // Clean up IPA
+
   let ipa = dict.ipa;
-  if (!ipa || ipa === `/${clean}/`) {
-    ipa = `/${phonicsUnits.map(u => u.phoneme.replace(/\//g, '')).join('·')}/`;
-  } else {
-    ipa = ipa.replace(/^\/\./, '/ˌ');
-  }
-  
-  const pos = dict.pos || 'n.';
-  const definition = dict.def || '新学单词';
-
-  let rootAffix = undefined;
-  if (dict.root) {
-    rootAffix = {
-      root: dict.root.root,
-      rootMeaning: dict.root.rootMeaning,
-      affix: dict.root.affix,
-      affixMeaning: dict.root.affixMeaning,
-      combinedMeaning: `${dict.root.rootMeaning} + ${dict.root.affixMeaning} = ${definition}`,
-      description: dict.root.desc
-    };
-  } else if (syllables.length > 1) {
-    rootAffix = {
-      root: syllables[0].text,
-      rootMeaning: '前部音节',
-      affix: syllables[1].text,
-      affixMeaning: '后部音节',
-      combinedMeaning: `${clean} (${definition})`,
-      description: '自然拼读音节结构记忆'
-    };
+  if (!ipa || ipa === `/${clean}/` || ipa === '/eil/') {
+    ipa = `/${phonicsUnits.filter(u => u.phoneme !== '∅').map(u => u.phoneme.replace(/\//g, '')).join('·')}/`;
   }
 
-  const spokenExample = dict.example || {
-    en: `The word "${clean}" is important in this context.`,
-    zh: `单词 "${clean}" 在当前语境中非常重要。`
-  };
-
-  const item: WordItem = {
+  return {
     id: `w-${clean}-${Date.now()}`,
     word: clean,
     ipa,
-    pos,
-    definition,
-    detail: dict.root?.desc || `${dict.source || 'Oxford 3000 / ECDICT'} 核心词汇，包含 ${phonicsUnits.length} 个音形对应音素。`,
+    definition: dict.def || '新学词汇',
+    pos: dict.pos || 'n.',
     syllables,
+    detail: dict.root?.desc || `${dict.source || 'Oxford 3000 / ECDICT'} 核心词汇，包含 ${phonicsUnits.length} 个音形对应音素。`,
     phonicsUnits,
-    rootAffix,
-    spokenExample,
-    isFavorite: false,
-    masteryScore: 0,
-    reviewCount: 1
+    spokenExample: dict.example,
   };
-
-  return item;
 }

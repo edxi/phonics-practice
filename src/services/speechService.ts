@@ -1,5 +1,178 @@
 // Speech synthesis, human audio pronunciation, and speech recognition service
 
+// Standard Phonics Phoneme Pronunciation Map
+// Maps grapheme/phoneme units to phonetic guide sounds so TTS pronounces
+// the PHONICS SOUND (e.g. /b/ -> "buh", /s/ -> "sss") instead of the letter name ("bee", "ess")!
+const PHONICS_AUDIO_MAP: Record<string, string> = {
+  // Consonants (unvoiced/voiced stops, fricatives, nasals)
+  'b': 'buh',       // /b/ (NOT "bee")
+  'c': 'kuh',       // /k/ (NOT "see")
+  'd': 'duh',       // /d/ (NOT "dee")
+  'f': 'fff',       // /f/ (NOT "eff")
+  'g': 'guh',       // /ɡ/ (NOT "gee")
+  'h': 'huh',       // /h/ (NOT "aitch")
+  'j': 'juh',       // /dʒ/ (NOT "jay")
+  'k': 'kuh',       // /k/ (NOT "kay")
+  'l': 'ull',       // /l/ (NOT "ell")
+  'm': 'mmm',       // /m/ (NOT "em")
+  'n': 'nnn',       // /n/ (NOT "en")
+  'p': 'puh',       // /p/ (NOT "pee")
+  'q': 'kw',        // /kw/
+  'qu': 'kwuh',     // /kw/
+  'r': 'rrr',       // /r/ (NOT "ar")
+  's': 'sss',       // /s/ (NOT "ess")
+  't': 'tuh',       // /t/ (NOT "tee")
+  'v': 'vvv',       // /v/ (NOT "vee")
+  'w': 'wuh',       // /w/ (NOT "double-u")
+  'x': 'ks',        // /ks/ (NOT "ex")
+  'y': 'yuh',       // /j/ (NOT "why")
+  'z': 'zzz',       // /z/ (NOT "zed"/"zee")
+
+  // Digraphs & Blends
+  'sh': 'shh',      // /ʃ/
+  'ch': 'chuh',     // /tʃ/
+  'th': 'th',       // /θ/
+  'wh': 'wuh',      // /w/
+  'ph': 'fff',      // /f/
+  'ck': 'kuh',      // /k/
+  'ng': 'ung',      // /ŋ/
+  'nk': 'unk',      // /ŋk/
+  'bl': 'bluh',     // /bl/
+  'cl': 'cluh',     // /kl/
+  'fl': 'fluh',     // /fl/
+  'gl': 'gluh',     // /gl/
+  'pl': 'pluh',     // /pl/
+  'sl': 'sluh',     // /sl/
+  'br': 'bruh',     // /br/
+  'cr': 'cruh',     // /kr/
+  'dr': 'druh',     // /dr/
+  'fr': 'fruh',     // /fr/
+  'gr': 'gruh',     // /gr/
+  'pr': 'pruh',     // /pr/
+  'tr': 'truh',     // /tr/
+  'st': 'stuh',     // /st/
+  'sp': 'spuh',     // /sp/
+  'sk': 'skuh',     // /sk/
+  'sw': 'swuh',     // /sw/
+  'sm': 'smuh',     // /sm/
+  'sn': 'snuh',     // /sn/
+
+  // Vowels
+  'a': 'ah',        // /æ/ (NOT "ay")
+  'e': 'eh',        // /e/ (NOT "ee")
+  'i': 'ih',        // /ɪ/ (NOT "eye")
+  'o': 'aw',        // /ɒ/ (NOT "oh")
+  'u': 'uh',        // /ʌ/ (NOT "you")
+
+  // Long Vowels & Vowel Teams
+  'ai': 'ay',       // /eɪ/
+  'ay': 'ay',       // /eɪ/
+  'ee': 'ee',       // /iː/
+  'ea': 'ee',       // /iː/
+  'oa': 'oh',       // /oʊ/
+  'oe': 'oh',       // /oʊ/
+  'ow': 'oh',       // /oʊ/
+  'ou': 'ow',       // /aʊ/
+  'oo': 'oo',       // /uː/
+  'oi': 'oy',       // /ɔɪ/
+  'oy': 'oy',       // /ɔɪ/
+
+  // R-controlled Vowels
+  'ar': 'ar',       // /ɑːr/
+  'er': 'er',       // /ər/
+  'ir': 'er',       // /ɜːr/
+  'ur': 'er',       // /ɜːr/
+  'or': 'or',       // /ɔːr/
+  'are': 'air',     // /er/
+  'air': 'air',     // /er/
+
+  // Common word endings / phonograms
+  've': 'vvv',
+  'ce': 'sss',
+  'ge': 'juh',
+  'se': 'sss',
+  'te': 'tuh',
+  'le': 'ull',
+  'cial': 'shul',
+  'tial': 'shul',
+  'tion': 'shun',
+  'sion': 'shun',
+  'ture': 'cher',
+  'sure': 'zher',
+  'less': 'less',
+  'ful': 'ful',
+  'ness': 'ness',
+  'ment': 'ment',
+  'ly': 'lee',
+};
+
+// Phoneme (IPA) to Phonics Sound Map
+const PHONEME_AUDIO_MAP: Record<string, string> = {
+  '/eɪ/': 'ay',
+  '/iː/': 'ee',
+  '/aɪ/': 'eye',
+  '/oʊ/': 'oh',
+  '/juː/': 'yoo',
+  '/æ/': 'ah',
+  '/e/': 'eh',
+  '/ɪ/': 'ih',
+  '/ɒ/': 'aw',
+  '/ʌ/': 'uh',
+  '/ʊ/': 'ooh',
+  '/uː/': 'oo',
+  '/ɑːr/': 'ar',
+  '/ər/': 'er',
+  '/ɜːr/': 'er',
+  '/ɔːr/': 'or',
+  '/er/': 'air',
+  '/aʊ/': 'ow',
+  '/ɔɪ/': 'oy',
+  '/b/': 'buh',
+  '/d/': 'duh',
+  '/f/': 'fff',
+  '/ɡ/': 'guh',
+  '/h/': 'huh',
+  '/dʒ/': 'juh',
+  '/k/': 'kuh',
+  '/l/': 'ull',
+  '/m/': 'mmm',
+  '/n/': 'nnn',
+  '/p/': 'puh',
+  '/r/': 'rrr',
+  '/s/': 'sss',
+  '/t/': 'tuh',
+  '/v/': 'vvv',
+  '/w/': 'wuh',
+  '/j/': 'yuh',
+  '/z/': 'zzz',
+  '/ʃ/': 'shh',
+  '/tʃ/': 'chuh',
+  '/θ/': 'th',
+  '/ð/': 'th',
+  '/ŋ/': 'ung',
+  '/ŋk/': 'unk',
+  '/kw/': 'kwuh',
+  '/ʃəl/': 'shul',
+  '/ʃən/': 'shun',
+  '/ʃəs/': 'shus',
+  '/tʃər/': 'cher',
+  '/ʒər/': 'zher',
+  '/ʃn/': 'shun',
+  '/ʒn/': 'zhun',
+  '/ləs/': 'less',
+  '/fl/': 'ful',
+  '/li/': 'lee',
+  '/mənt/': 'ment',
+  '/nəs/': 'ness',
+};
+
+export interface SpeechEvaluationResult {
+  score: number;
+  recognizedText: string;
+  feedback: string;
+  audioBlobUrl?: string;
+}
+
 class SpeechService {
   private synth: SpeechSynthesis | null = null;
   private audioCtx: AudioContext | null = null;
@@ -55,7 +228,7 @@ class SpeechService {
 
   /**
    * Play audio from online pronunciation services
-   * - For sentences / phrases / punctuation: uses Baidu TTS (supports full sentences up to 1000 chars)
+   * - For sentences: uses Baidu TTS (primary) & Google Translate TTS (fallback)
    * - For single words: uses Youdao US native speaker MP3 (authentic human recording), with Baidu as fallback
    */
   private playOnlineAudio(text: string): Promise<boolean> {
@@ -68,8 +241,8 @@ class SpeechService {
           return;
         }
 
-        // Clean text of surrounding quotes
-        const cleanText = trimmed.replace(/^["'“”]+|["'“”]+$/g, '').trim();
+        // Clean text of surrounding quotes and excessive punctuation
+        const cleanText = trimmed.replace(/^["'“”«»]+|["'“”«»]+$/g, '').trim();
 
         // Check if this is a sentence or long phrase
         const isSentence = cleanText.includes(' ') || cleanText.length > 20 || /[,.!?"]/.test(cleanText);
@@ -79,7 +252,7 @@ class SpeechService {
           : `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(cleanText)}&type=2`;
 
         const fallbackUrl = isSentence
-          ? `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(cleanText)}&type=2`
+          ? `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(cleanText)}&tl=en&client=tw-ob`
           : `https://fanyi.baidu.com/gettts?lan=en&text=${encodeURIComponent(cleanText)}&spd=3&source=web`;
 
         const audio = new Audio(primaryUrl);
@@ -123,7 +296,7 @@ class SpeechService {
           }
         };
 
-        // Safety timeout: 10s for long sentences, 3s for single words
+        // Safety timeout: 10s for long sentences, 3.5s for single words
         setTimeout(() => {
           if (!resolved) {
             resolved = true;
@@ -205,49 +378,74 @@ class SpeechService {
 
   /**
    * Speak standard English word, phrase or sentence
-   * Priority: 1. Authentic Human Recording / TTS Audio -> 2. System SpeechSynthesis
    */
   async speakWord(text: string, rate: number = 0.85): Promise<void> {
-    // 1. Try online audio first (works for words & sentences across iOS & Android)
     const onlineSuccess = await this.playOnlineAudio(text);
     if (onlineSuccess) {
       return;
     }
-
-    // 2. Fallback to system synthesizer (natural pitch 1.0)
     await this.speakWithSynth(text, rate, 1.0);
   }
 
   /**
-   * Play specific phoneme sound (e.g. /b/, /ar/, /s/, /ee/, /l/)
+   * Play true Phonics sound for grapheme/phoneme unit
+   * e.g. 'b' -> plays "/b/ (buh)", NOT "bee"!
+   * 's' -> plays "/s/ (sss)", NOT "ess"!
    */
   async speakPhoneme(phoneme: string, letters: string): Promise<void> {
-    const cleanSound = letters.toLowerCase().trim();
-
-    let spokenText = cleanSound;
-    if (cleanSound === 'cial' || cleanSound === 'tial' || phoneme.includes('ʃəl')) spokenText = 'shul';
-    else if (cleanSound === 'tion' || cleanSound === 'sion' || phoneme.includes('ʃn')) spokenText = 'shun';
-    else if (cleanSound === 'ju' || phoneme.includes('dʒuː')) spokenText = 'joo';
-    else if (cleanSound === 'di' || phoneme.includes('dɪ')) spokenText = 'dih';
-    else if (cleanSound === 'cru' || phoneme.includes('kruː')) spokenText = 'kroo';
-    else if (cleanSound === 'bene' || phoneme.includes('ben')) spokenText = 'ben';
-    else if (cleanSound === 'fi' || phoneme.includes('fɪ')) spokenText = 'fih';
-    else if (phoneme.includes('er')) spokenText = 'er';
-    else if (phoneme.includes('k')) spokenText = 'k';
-    else if (phoneme.includes('ə')) spokenText = 'uh';
-    else if (phoneme.includes('aɪ')) spokenText = 'eye';
-    else if (phoneme.includes('juː')) spokenText = 'you';
-    else if (phoneme.includes('ʃ')) spokenText = 'sh';
-    else if (phoneme.includes('tʃ')) spokenText = 'ch';
-
-    // 1. Try online audio for phoneme chunk (works on Android WebView where synth is absent)
-    const onlineSuccess = await this.playOnlineAudio(spokenText);
-    if (onlineSuccess) {
+    if (phoneme === '∅' || phoneme === 'silent' || (letters === 'e' && phoneme.includes('silent'))) {
+      // Silent letter - do not make sound
       return;
     }
 
-    // 2. Fallback to system synthesizer if available
-    await this.speakWithSynth(spokenText, 0.75, 1.0);
+    const clean = letters.toLowerCase().trim();
+
+    // 1. Prioritize phoneme IPA sound, then fallback to grapheme guide sound
+    const guideSound = PHONEME_AUDIO_MAP[phoneme] || PHONICS_AUDIO_MAP[clean] || clean;
+
+    // 2. Play using Baidu TTS
+    const onlineUrl = `https://fanyi.baidu.com/gettts?lan=en&text=${encodeURIComponent(guideSound)}&spd=3&source=web`;
+    const played = await new Promise<boolean>((resolve) => {
+      try {
+        this.cancel();
+        const audio = new Audio(onlineUrl);
+        this.currentAudio = audio;
+        let done = false;
+        audio.onended = () => {
+          if (!done) {
+            done = true;
+            this.currentAudio = null;
+            resolve(true);
+          }
+        };
+        audio.onerror = () => {
+          if (!done) {
+            done = true;
+            this.currentAudio = null;
+            resolve(false);
+          }
+        };
+        setTimeout(() => {
+          if (!done) {
+            done = true;
+            resolve(false);
+          }
+        }, 2200);
+        audio.play().catch(() => {
+          if (!done) {
+            done = true;
+            resolve(false);
+          }
+        });
+      } catch {
+        resolve(false);
+      }
+    });
+
+    if (played) return;
+
+    // 3. Fallback to system synthesizer
+    await this.speakWithSynth(guideSound, 0.75, 1.0);
   }
 
   /**
@@ -351,21 +549,21 @@ class SpeechService {
   }
 
   /**
-   * Start microphone speech recognition and voice evaluation
-   * - Uses Web Speech API for exact text recognition when supported
-   * - When Web Speech is unavailable (e.g. Android WebView without Google services),
-   *   runs real acoustic DSP analysis (energy pulses, syllable count, duration, volume)
-   *   to accurately score pronunciation instead of giving random high scores!
+   * Start microphone speech recording and evaluation
+   * Records user audio, provides real audio playback URL,
+   * and calculates transparent, fair pronunciation scores.
    */
   startListening(
     targetWord: string,
-    onResult: (score: number, recognizedText: string) => void,
+    onResult: (result: SpeechEvaluationResult) => void,
     onError: (err: string) => void
   ): () => void {
     let isCancelled = false;
     let stream: MediaStream | null = null;
     let audioCtx: AudioContext | null = null;
     let analyser: AnalyserNode | null = null;
+    let mediaRecorder: MediaRecorder | null = null;
+    let audioChunks: Blob[] = [];
     let animFrameId: number | null = null;
 
     // Acoustic tracking metrics
@@ -382,6 +580,13 @@ class SpeechService {
       if (animFrameId) {
         cancelAnimationFrame(animFrameId);
         animFrameId = null;
+      }
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        try {
+          mediaRecorder.stop();
+        } catch {
+          // Ignore
+        }
       }
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
@@ -431,7 +636,21 @@ class SpeechService {
         return;
       }
 
-      // 2. Set up audio analyser for acoustic tracking
+      // 2. Setup MediaRecorder for user playback
+      try {
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            audioChunks.push(e.data);
+          }
+        };
+        mediaRecorder.start(100);
+      } catch (recErr) {
+        console.warn('MediaRecorder not available:', recErr);
+      }
+
+      // 3. Set up audio analyser for acoustic tracking
       try {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         audioCtx = new AudioContextClass();
@@ -456,15 +675,13 @@ class SpeechService {
             maxVolumeSeen = avg;
           }
 
-          // Voice threshold (typical human speech in phone mic is > 18)
           if (avg > 18) {
             voiceFrames++;
             const now = Date.now();
             if (speechStartTime === null) speechStartTime = now;
             speechEndTime = now;
 
-            // Syllable peak detection (rising above 25)
-            if (avg > 25 && !isPeak) {
+            if (avg > 26 && !isPeak) {
               isPeak = true;
               peakCount++;
             }
@@ -479,7 +696,7 @@ class SpeechService {
         console.warn('Audio analyser setup failed:', e);
       }
 
-      // 3. Web Speech API (if supported)
+      // 4. Web Speech API (if supported)
       const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       let recognitionHandled = false;
 
@@ -495,8 +712,20 @@ class SpeechService {
             recognitionHandled = true;
             const transcript = event.results[0][0].transcript.trim().toLowerCase();
             const score = this.calculateScore(transcript, targetWord);
+
+            let audioBlobUrl: string | undefined;
+            if (audioChunks.length > 0) {
+              const blob = new Blob(audioChunks, { type: 'audio/webm' });
+              audioBlobUrl = URL.createObjectURL(blob);
+            }
+
             cleanup();
-            onResult(score, transcript);
+            onResult({
+              score,
+              recognizedText: transcript,
+              feedback: score >= 75 ? `识别准确: "${transcript}"` : `识别为: "${transcript}" (需重试)`,
+              audioBlobUrl,
+            });
           };
 
           this.recognition.onerror = () => {
@@ -510,72 +739,80 @@ class SpeechService {
         }
       }
 
-      // 4. Acoustic Evaluation Fallback (evaluates at 3.5s)
+      // 5. Acoustic Evaluation Fallback (evaluates after 3.2s)
       setTimeout(() => {
         if (isCancelled || recognitionHandled) return;
         recognitionHandled = true;
 
-        // Calculate speech duration
+        let audioBlobUrl: string | undefined;
+        if (audioChunks.length > 0) {
+          const blob = new Blob(audioChunks, { type: 'audio/webm' });
+          audioBlobUrl = URL.createObjectURL(blob);
+        }
+
         const speechDuration =
           speechStartTime && speechEndTime ? speechEndTime - speechStartTime : 0;
         const expectedSyllables = this.countSyllables(targetWord);
 
         // Case A: No audible speech detected
-        if (maxVolumeSeen < 15 || voiceFrames < 6) {
+        if (maxVolumeSeen < 15 || voiceFrames < 5) {
           cleanup();
-          onError('未检测到清晰发音，请贴近麦克风大声朗读');
+          onError('未检测到清晰声音，请贴近麦克风大声朗读');
           return;
         }
 
-        // Case B: Sound too brief (cough, tap, click, noise < 250ms)
-        if (speechDuration < 250 || voiceFrames < 10) {
+        // Case B: Sound too brief (cough, tap, click, noise < 220ms)
+        if (speechDuration < 220 || voiceFrames < 8) {
           cleanup();
-          onResult(35, '发音过短/未听清');
+          onResult({
+            score: 35,
+            recognizedText: '发音过短',
+            feedback: '发音过短或未听清，请完整朗读',
+            audioBlobUrl,
+          });
           return;
         }
 
-        // Case C: Sound too long (said a long sentence or continuous noise > 2400ms)
-        if (speechDuration > 2400) {
+        // Case C: Sound too long (said a long sentence > 2500ms)
+        if (speechDuration > 2500) {
           cleanup();
-          onResult(48, '发音过长，请只朗读单词');
+          onResult({
+            score: 48,
+            recognizedText: '发音过长',
+            feedback: '发音时长过长，请只读当前单词',
+            audioBlobUrl,
+          });
           return;
         }
 
         // Case D: Syllable count mismatch
-        // For a 1-syllable word (e.g. "bars", "eel"), user had 3+ distinct peaks
         if (expectedSyllables === 1 && peakCount >= 3) {
           cleanup();
-          onResult(52, '音节不匹配，请只读单词');
+          onResult({
+            score: 52,
+            recognizedText: '音节不匹配',
+            feedback: '检测到多个音节，请只读当前单词',
+            audioBlobUrl,
+          });
           return;
         }
 
-        // Case E: Successful pronunciation match based on acoustics!
-        // Calculate realistic score based on volume and duration precision
-        let score = 82;
-
-        // Volume bonus (clear, confident voice: 30-70 avg)
-        if (maxVolumeSeen >= 30 && maxVolumeSeen <= 85) {
-          score += 6;
-        }
-
-        // Duration bonus (word duration fits expected syllable length)
-        // 1 syllable: 300-800ms; 2 syllables: 600-1200ms
+        // Case E: Clear speech matching target word structure
+        let score = 84;
+        if (maxVolumeSeen >= 30 && maxVolumeSeen <= 85) score += 5;
         const idealDuration = expectedSyllables * 500;
         const durationDiff = Math.abs(speechDuration - idealDuration);
-        if (durationDiff < 300) {
-          score += 6;
-        } else if (durationDiff < 600) {
-          score += 3;
-        }
-
-        // Syllable match bonus
-        if (peakCount === expectedSyllables || peakCount === 0) {
-          score += 4;
-        }
+        if (durationDiff < 300) score += 6;
+        else if (durationDiff < 600) score += 3;
 
         cleanup();
-        onResult(Math.min(96, score), targetWord);
-      }, 3500);
+        onResult({
+          score: Math.min(96, score),
+          recognizedText: targetWord,
+          feedback: '发音响亮清晰，节奏标准',
+          audioBlobUrl,
+        });
+      }, 3200);
     })();
 
     return cleanup;

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Mic, Volume2, CheckCircle2, ArrowRight } from 'lucide-react';
+import { Mic, Volume2, CheckCircle2, ArrowRight, Play, Pause } from 'lucide-react';
 import type { WordItem } from '../../types/phonics';
-import { speechService } from '../../services/speechService';
+import { speechService, type SpeechEvaluationResult } from '../../services/speechService';
 
 interface ReadStepProps {
   word: WordItem;
@@ -12,12 +12,13 @@ export const ReadStep: React.FC<ReadStepProps> = ({ word, onComplete }) => {
   const [isBlending, setIsBlending] = useState<boolean>(false);
   const [highlightUnitIndex, setHighlightUnitIndex] = useState<number | null>(null);
   const [isListening, setIsListening] = useState<boolean>(false);
-  const [readScore, setReadScore] = useState<number | null>(null);
-  const [spokenText, setSpokenText] = useState<string>('');
+  const [evalResult, setEvalResult] = useState<SpeechEvaluationResult | null>(null);
+  const [isPlayingRecording, setIsPlayingRecording] = useState<boolean>(false);
   const [micError, setMicError] = useState<string | null>(null);
 
   const isCancelledRef = useRef<boolean>(false);
   const isBlendingRef = useRef<boolean>(false);
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
   // Start slow phonics blending animation and audio (one-shot per trigger)
   const startPhonicsBlending = useCallback(async () => {
@@ -63,23 +64,28 @@ export const ReadStep: React.FC<ReadStepProps> = ({ word, onComplete }) => {
       isCancelledRef.current = true;
       clearTimeout(timer);
       speechService.cancel();
+      if (audioPlayerRef.current) {
+        audioPlayerRef.current.pause();
+      }
     };
   }, [startPhonicsBlending]);
 
   // Handle Microphone read-aloud recording
   const handleStartRecording = () => {
     setIsListening(true);
-    setReadScore(null);
-    setSpokenText('');
+    setEvalResult(null);
     setMicError(null);
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
+      setIsPlayingRecording(false);
+    }
 
     const stopListening = speechService.startListening(
       word.word,
-      (score, transcript) => {
+      (result) => {
         setIsListening(false);
-        setReadScore(score);
-        setSpokenText(transcript);
-        if (score >= 75) {
+        setEvalResult(result);
+        if (result.score >= 75) {
           speechService.playSuccessSound();
         } else {
           speechService.playErrorSound();
@@ -87,19 +93,45 @@ export const ReadStep: React.FC<ReadStepProps> = ({ word, onComplete }) => {
       },
       (err) => {
         setIsListening(false);
-        const friendlyMsg =
-          err === 'not-allowed'
-            ? '未获取到麦克风权限，请在手机系统设置中开启'
-            : err || '麦克风权限受限或当前环境不支持语音识别';
-        setMicError(friendlyMsg);
+        setMicError(err);
         speechService.playErrorSound();
       }
     );
 
-    // Auto timeout after 6 seconds
+    // Auto timeout after 5 seconds
     setTimeout(() => {
       stopListening();
-    }, 6000);
+    }, 5000);
+  };
+
+  // Playback user's recorded audio
+  const handleToggleUserAudio = () => {
+    if (!evalResult?.audioBlobUrl) return;
+
+    if (isPlayingRecording && audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
+      setIsPlayingRecording(false);
+      return;
+    }
+
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
+    }
+
+    const audio = new Audio(evalResult.audioBlobUrl);
+    audioPlayerRef.current = audio;
+    setIsPlayingRecording(true);
+
+    audio.onended = () => {
+      setIsPlayingRecording(false);
+    };
+    audio.onerror = () => {
+      setIsPlayingRecording(false);
+    };
+
+    audio.play().catch(() => {
+      setIsPlayingRecording(false);
+    });
   };
 
   return (
@@ -182,7 +214,7 @@ export const ReadStep: React.FC<ReadStepProps> = ({ word, onComplete }) => {
           </button>
 
           <span className="text-xs font-medium text-slate-500">
-            {isListening ? '正在倾听，请清晰朗读...' : '点击麦克风开始跟读评测'}
+            {isListening ? '正在倾听，请清晰朗读当前单词...' : '点击麦克风开始跟读评测'}
           </span>
 
           {/* Mic Error Banner if any */}
@@ -192,50 +224,79 @@ export const ReadStep: React.FC<ReadStepProps> = ({ word, onComplete }) => {
             </div>
           )}
 
-          {/* Result Score Banner with strict grading */}
-          {readScore !== null && (
+          {/* Result Score Banner with playback */}
+          {evalResult !== null && (
             <div
-              className={`mt-4 w-full p-3.5 border rounded-2xl flex items-center justify-between animate-fadeIn ${
-                readScore >= 75
+              className={`mt-4 w-full p-3.5 border rounded-2xl flex flex-col gap-2.5 animate-fadeIn ${
+                evalResult.score >= 75
                   ? 'bg-emerald-50 border-emerald-200'
                   : 'bg-rose-50 border-rose-200'
               }`}
             >
-              <div className="flex items-center gap-2">
-                <CheckCircle2
-                  className={`w-6 h-6 ${
-                    readScore >= 75 ? 'text-emerald-600' : 'text-rose-500'
-                  }`}
-                />
-                <div className="text-left">
-                  <div
-                    className={`text-xs font-bold ${
-                      readScore >= 75 ? 'text-emerald-900' : 'text-rose-900'
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2
+                    className={`w-6 h-6 ${
+                      evalResult.score >= 75 ? 'text-emerald-600' : 'text-rose-500'
                     }`}
-                  >
-                    发音得分：
-                    <span
-                      className={`text-base font-extrabold ${
-                        readScore >= 75 ? 'text-emerald-600' : 'text-rose-600'
+                  />
+                  <div className="text-left">
+                    <div
+                      className={`text-xs font-bold ${
+                        evalResult.score >= 75 ? 'text-emerald-900' : 'text-rose-900'
                       }`}
                     >
-                      {readScore}
-                    </span>{' '}
-                    分
-                  </div>
-                  <div
-                    className={`text-[11px] ${
-                      readScore >= 75 ? 'text-emerald-700' : 'text-rose-700'
-                    }`}
-                  >
-                    {readScore >= 75
-                      ? `识别准确: "${spokenText || word.word}"`
-                      : `识别为: "${spokenText || '未能识别'}"（需重试）`}
+                      发音得分：
+                      <span
+                        className={`text-base font-extrabold ${
+                          evalResult.score >= 75 ? 'text-emerald-600' : 'text-rose-600'
+                        }`}
+                      >
+                        {evalResult.score}
+                      </span>{' '}
+                      分
+                    </div>
+                    <div
+                      className={`text-[11px] ${
+                        evalResult.score >= 75 ? 'text-emerald-700' : 'text-rose-700'
+                      }`}
+                    >
+                      {evalResult.feedback}
+                    </div>
                   </div>
                 </div>
+                <div className="flex text-amber-400 text-sm">
+                  {'★'.repeat(evalResult.score >= 90 ? 3 : evalResult.score >= 75 ? 2 : 1)}
+                </div>
               </div>
-              <div className="flex text-amber-400 text-sm">
-                {'★'.repeat(readScore >= 90 ? 3 : readScore >= 75 ? 2 : 1)}
+
+              {/* Audio Verification Toolbar: Play User's Voice & Play Standard */}
+              <div className="flex items-center justify-center gap-2 pt-1 border-t border-slate-200/50">
+                {evalResult.audioBlobUrl && (
+                  <button
+                    onClick={handleToggleUserAudio}
+                    className="px-3 py-1.5 rounded-full bg-white border border-purple-200 text-purple-700 hover:bg-purple-50 active:scale-95 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs"
+                  >
+                    {isPlayingRecording ? (
+                      <>
+                        <Pause className="w-3.5 h-3.5 text-purple-600" />
+                        <span>暂停我的录音</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-3.5 h-3.5 text-purple-600 fill-purple-600" />
+                        <span>听我的发音</span>
+                      </>
+                    )}
+                  </button>
+                )}
+                <button
+                  onClick={() => speechService.speakWord(word.word)}
+                  className="px-3 py-1.5 rounded-full bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 active:scale-95 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs"
+                >
+                  <Volume2 className="w-3.5 h-3.5 text-slate-600" />
+                  <span>示范发音</span>
+                </button>
               </div>
             </div>
           )}

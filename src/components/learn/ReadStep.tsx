@@ -87,15 +87,19 @@ export const ReadStep: React.FC<ReadStepProps> = ({ word, onComplete }) => {
       },
       (err) => {
         setIsListening(false);
-        setMicError(err || '麦克风权限受限或当前浏览器不支持语音识别');
+        const friendlyMsg =
+          err === 'not-allowed'
+            ? '未获取到麦克风权限，请在手机系统设置中开启'
+            : err || '麦克风权限受限或当前环境不支持语音识别';
+        setMicError(friendlyMsg);
         speechService.playErrorSound();
       }
     );
 
-    // Auto timeout after 4.5 seconds
+    // Auto timeout after 6 seconds
     setTimeout(() => {
       stopListening();
-    }, 4500);
+    }, 6000);
   };
 
   return (

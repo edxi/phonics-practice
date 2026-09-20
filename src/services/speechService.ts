@@ -1,4 +1,7 @@
 // Speech synthesis, phoneme audio generation, and speech recognition service
+import { TextToSpeech, QueueStrategy } from '@capacitor-community/text-to-speech';
+import { SpeechRecognition } from '@capacitor-community/speech-recognition';
+import { Capacitor } from '@capacitor/core';
 
 class SpeechService {
   private synth: SpeechSynthesis | null = null;
@@ -25,7 +28,12 @@ class SpeechService {
   /**
    * Cancel any ongoing speech or recognition
    */
-  cancel(): void {
+  async cancel(): Promise<void> {
+    try {
+      await TextToSpeech.stop();
+    } catch {
+      // Ignore
+    }
     if (this.synth) {
       try {
         this.synth.cancel();
@@ -40,83 +48,171 @@ class SpeechService {
         // Ignore
       }
     }
+    if (Capacitor.isNativePlatform()) {
+      try {
+        await SpeechRecognition.stop();
+      } catch {
+        // Ignore
+      }
+    }
+  }
+
+  /**
+   * Fallback: Play audio using online pronunciation dictionary
+   */
+  private playOnlineAudio(text: string): Promise<void> {
+    return new Promise((resolve) => {
+      try {
+        const audio = new Audio(`https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(text)}&type=2`);
+        audio.onended = () => resolve();
+        audio.onerror = () => resolve();
+        audio.play().catch(() => resolve());
+      } catch {
+        resolve();
+      }
+    });
   }
 
   /**
    * Speak standard English word or phrase
    */
-  speakWord(text: string, rate: number = 0.85): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.synth) {
-        resolve();
-        return;
-      }
+  async speakWord(text: string, rate: number = 0.85): Promise<void> {
+    // 1. Try Capacitor Native TextToSpeech plugin (works offline on Android & iOS native)
+    try {
+      await TextToSpeech.stop();
+      await TextToSpeech.speak({
+        text,
+        lang: 'en-US',
+        rate,
+        pitch: 1.05,
+        volume: 1.0,
+        category: 'ambient',
+        queueStrategy: QueueStrategy.Flush,
+      });
+      return;
+    } catch (nativeErr) {
+      console.warn('Native TTS unavailable, falling back to Web Speech:', nativeErr);
+    }
 
-      this.synth.cancel();
+    // 2. Fallback to Web SpeechSynthesis API
+    if (this.synth) {
+      const played = await new Promise<boolean>((resolve) => {
+        try {
+          this.synth!.cancel();
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = 'en-US';
+          utterance.rate = rate;
+          utterance.pitch = 1.05;
 
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-US';
-      utterance.rate = rate; // slightly slower for learners
-      utterance.pitch = 1.05;
+          const voices = this.synth!.getVoices();
+          const preferredVoice = voices.find(
+            (v) =>
+              (v.lang === 'en-US' || v.lang.startsWith('en')) &&
+              (v.name.includes('Samantha') ||
+                v.name.includes('Google') ||
+                v.name.includes('Natural') ||
+                v.name.includes('Karen'))
+          );
+          if (preferredVoice) {
+            utterance.voice = preferredVoice;
+          }
 
-      const voices = this.synth.getVoices();
-      // Try to find a good US English voice
-      const preferredVoice = voices.find(v => (v.lang === 'en-US' || v.lang.startsWith('en')) && (v.name.includes('Samantha') || v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Karen')));
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
-      }
+          let resolved = false;
+          utterance.onend = () => {
+            if (!resolved) {
+              resolved = true;
+              resolve(true);
+            }
+          };
+          utterance.onerror = () => {
+            if (!resolved) {
+              resolved = true;
+              resolve(false);
+            }
+          };
 
-      utterance.onend = () => resolve();
-      utterance.onerror = () => resolve();
+          // Timeout in case speech synthesis silently hangs
+          setTimeout(() => {
+            if (!resolved) {
+              resolved = true;
+              resolve(false);
+            }
+          }, 2500);
 
-      this.synth.speak(utterance);
-    });
+          this.synth!.speak(utterance);
+        } catch {
+          resolve(false);
+        }
+      });
+
+      if (played) return;
+    }
+
+    // 3. Fallback to online dictionary audio
+    await this.playOnlineAudio(text);
   }
 
   /**
    * Play specific phoneme sound (e.g. /k/, /er/, /l/)
    */
-  speakPhoneme(phoneme: string, letters: string): Promise<void> {
-    return new Promise((resolve) => {
-      // Clean phoneme representation
-      const cleanSound = letters.toLowerCase();
-      
-      // We synthesize the sound using speech or tuned audio
-      if (!this.synth) {
-        this.playBeepSound();
-        resolve();
-        return;
-      }
+  async speakPhoneme(phoneme: string, letters: string): Promise<void> {
+    const cleanSound = letters.toLowerCase();
 
-      this.synth.cancel();
+    // Map phonemes to spoken representation
+    let spokenText = cleanSound;
+    if (cleanSound === 'cial' || cleanSound === 'tial' || phoneme.includes('ʃəl')) spokenText = 'shul';
+    else if (cleanSound === 'tion' || cleanSound === 'sion' || phoneme.includes('ʃn')) spokenText = 'shun';
+    else if (cleanSound === 'ju' || phoneme.includes('dʒuː')) spokenText = 'joo';
+    else if (cleanSound === 'di' || phoneme.includes('dɪ')) spokenText = 'dih';
+    else if (cleanSound === 'cru' || phoneme.includes('kruː')) spokenText = 'kroo';
+    else if (cleanSound === 'bene' || phoneme.includes('ben')) spokenText = 'ben';
+    else if (cleanSound === 'fi' || phoneme.includes('fɪ')) spokenText = 'fih';
+    else if (phoneme.includes('er')) spokenText = 'er';
+    else if (phoneme.includes('k')) spokenText = 'k';
+    else if (phoneme.includes('ə')) spokenText = 'uh';
+    else if (phoneme.includes('aɪ')) spokenText = 'eye';
+    else if (phoneme.includes('juː')) spokenText = 'you';
+    else if (phoneme.includes('ʃ')) spokenText = 'sh';
+    else if (phoneme.includes('tʃ')) spokenText = 'ch';
 
-      // For phonemes, speak the sound phonetically or natural chunk sound
-      let spokenText = cleanSound;
-      if (cleanSound === 'cial' || cleanSound === 'tial' || phoneme.includes('ʃəl')) spokenText = 'shul';
-      else if (cleanSound === 'tion' || cleanSound === 'sion' || phoneme.includes('ʃn')) spokenText = 'shun';
-      else if (cleanSound === 'ju' || phoneme.includes('dʒuː')) spokenText = 'joo';
-      else if (cleanSound === 'di' || phoneme.includes('dɪ')) spokenText = 'dih';
-      else if (cleanSound === 'cru' || phoneme.includes('kruː')) spokenText = 'kroo';
-      else if (cleanSound === 'bene' || phoneme.includes('ben')) spokenText = 'ben';
-      else if (cleanSound === 'fi' || phoneme.includes('fɪ')) spokenText = 'fih';
-      else if (phoneme.includes('er')) spokenText = 'er';
-      else if (phoneme.includes('k')) spokenText = 'k';
-      else if (phoneme.includes('ə')) spokenText = 'uh';
-      else if (phoneme.includes('aɪ')) spokenText = 'eye';
-      else if (phoneme.includes('juː')) spokenText = 'you';
-      else if (phoneme.includes('ʃ')) spokenText = 'sh';
-      else if (phoneme.includes('tʃ')) spokenText = 'ch';
+    // 1. Try native TTS
+    try {
+      await TextToSpeech.stop();
+      await TextToSpeech.speak({
+        text: spokenText,
+        lang: 'en-US',
+        rate: 0.7,
+        pitch: 1.2,
+        volume: 1.0,
+        category: 'ambient',
+        queueStrategy: QueueStrategy.Flush,
+      });
+      return;
+    } catch {
+      // Fall through to web synth
+    }
 
-      const utterance = new SpeechSynthesisUtterance(spokenText);
-      utterance.lang = 'en-US';
-      utterance.rate = 0.7;
-      utterance.pitch = 1.2;
+    // 2. Web synth fallback
+    if (this.synth) {
+      await new Promise<void>((resolve) => {
+        try {
+          this.synth!.cancel();
+          const utterance = new SpeechSynthesisUtterance(spokenText);
+          utterance.lang = 'en-US';
+          utterance.rate = 0.7;
+          utterance.pitch = 1.2;
+          utterance.onend = () => resolve();
+          utterance.onerror = () => resolve();
+          this.synth!.speak(utterance);
+        } catch {
+          resolve();
+        }
+      });
+      return;
+    }
 
-      utterance.onend = () => resolve();
-      utterance.onerror = () => resolve();
-
-      this.synth.speak(utterance);
-    });
+    // 3. Last fallback: beep
+    this.playBeepSound();
   }
 
   /**
@@ -135,7 +231,7 @@ class SpeechService {
       osc.frequency.setValueAtTime(523.25, now); // C5
       osc.frequency.setValueAtTime(659.25, now + 0.08); // E5
       osc.frequency.setValueAtTime(783.99, now + 0.16); // G5
-      osc.frequency.setValueAtTime(1046.50, now + 0.24); // C6
+      osc.frequency.setValueAtTime(1046.5, now + 0.24); // C6
 
       gain.gain.setValueAtTime(0.15, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
@@ -216,10 +312,73 @@ class SpeechService {
     onResult: (score: number, recognizedText: string) => void,
     onError: (err: string) => void
   ): () => void {
+    const isNativeAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+
+    // 1. On Android Native: Use native SpeechRecognition plugin
+    if (isNativeAndroid) {
+      let isCancelled = false;
+
+      (async () => {
+        try {
+          const { available } = await SpeechRecognition.available().catch(() => ({ available: false }));
+          if (!available) {
+            onError('设备未安装或未启用语音识别引擎，请在系统设置中启用');
+            return;
+          }
+
+          const status = await SpeechRecognition.checkPermissions().catch(() => null);
+          if (status?.speechRecognition !== 'granted') {
+            const req = await SpeechRecognition.requestPermissions().catch(() => null);
+            if (req?.speechRecognition !== 'granted') {
+              onError('未获得麦克风权限，请在手机系统设置中开启录音权限');
+              return;
+            }
+          }
+
+          if (isCancelled) return;
+
+          const result = await SpeechRecognition.start({
+            language: 'en-US',
+            maxResults: 3,
+            popup: false,
+            partialResults: false,
+          });
+
+          if (isCancelled) return;
+
+          const matches = result.matches || [];
+          if (matches.length > 0) {
+            const transcript = matches[0].trim().toLowerCase();
+            const score = this.calculateScore(transcript, targetWord);
+            onResult(score, transcript);
+          } else {
+            onError('未听到清晰发音，请大声朗读');
+          }
+        } catch (err: any) {
+          if (isCancelled) return;
+          console.warn('Native speech recognition error:', err);
+          const msg = err?.message || String(err);
+          if (msg.includes('not-allowed') || msg.includes('denied') || msg.includes('permission')) {
+            onError('未获得麦克风权限，请在系统设置中开启录音权限');
+          } else if (msg.includes('no match') || msg.includes('No speech')) {
+            onError('未识别到发音，请贴近麦克风大声朗读');
+          } else {
+            onError('语音识别暂不可用：' + (msg || '请检查系统语音服务'));
+          }
+        }
+      })();
+
+      return () => {
+        isCancelled = true;
+        SpeechRecognition.stop().catch(() => {});
+      };
+    }
+
+    // 2. On Web / iOS: Use Web Speech API
     const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRec) {
-      onError('当前浏览器环境未开放 Web Speech 语音识别接口（支持 Safari / Chrome）');
+      onError('当前环境未开放语音识别接口（支持 Safari / Chrome）');
       return () => {};
     }
 
@@ -231,37 +390,21 @@ class SpeechService {
 
       this.recognition.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript.trim().toLowerCase();
-        const cleanTarget = targetWord.toLowerCase().trim();
-        
-        let score = 0;
-        if (transcript === cleanTarget) {
-          score = 100;
-        } else if (transcript.split(/\s+/).includes(cleanTarget)) {
-          // User spoke phrase containing target word (e.g. "a judicial")
-          score = 92;
-        } else {
-          // Strict Levenshtein similarity calculation
-          const dist = this.levenshtein(transcript, cleanTarget);
-          const maxLen = Math.max(transcript.length, cleanTarget.length);
-          const similarity = 1 - dist / maxLen;
-
-          if (similarity >= 0.85) {
-            score = 88;
-          } else if (similarity >= 0.70) {
-            score = 75;
-          } else if (similarity >= 0.50) {
-            score = 50;
-          } else {
-            // Noise, babbling, or unrelated word
-            score = Math.max(0, Math.round(similarity * 40));
-          }
-        }
-
+        const score = this.calculateScore(transcript, targetWord);
         onResult(score, transcript);
       };
 
       this.recognition.onerror = (event: any) => {
-        onError(event.error || 'Recognition error');
+        const err = event.error || 'Recognition error';
+        if (err === 'not-allowed') {
+          onError('未获得麦克风权限，请在系统设置中允许此应用的录音权限');
+        } else if (err === 'no-speech') {
+          onError('未识别到发音，请贴近麦克风大声朗读');
+        } else if (err === 'network') {
+          onError('语音识别网络连接超时，请检查网络');
+        } else {
+          onError(err);
+        }
       };
 
       this.recognition.start();
@@ -278,6 +421,29 @@ class SpeechService {
     } catch (e: any) {
       onError(e.message);
       return () => {};
+    }
+  }
+
+  private calculateScore(transcript: string, targetWord: string): number {
+    const cleanTarget = targetWord.toLowerCase().trim();
+    if (transcript === cleanTarget) {
+      return 100;
+    } else if (transcript.split(/\s+/).includes(cleanTarget)) {
+      return 92;
+    } else {
+      const dist = this.levenshtein(transcript, cleanTarget);
+      const maxLen = Math.max(transcript.length, cleanTarget.length);
+      const similarity = 1 - dist / maxLen;
+
+      if (similarity >= 0.85) {
+        return 88;
+      } else if (similarity >= 0.7) {
+        return 75;
+      } else if (similarity >= 0.5) {
+        return 50;
+      } else {
+        return Math.max(0, Math.round(similarity * 40));
+      }
     }
   }
 

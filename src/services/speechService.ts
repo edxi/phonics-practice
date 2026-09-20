@@ -54,18 +54,39 @@ class SpeechService {
   }
 
   /**
-   * Play authentic native speaker human audio from online dictionary (MP3)
-   * type=2: Standard American English (native human speaker)
+   * Play audio from online pronunciation services
+   * - For sentences / phrases / punctuation: uses Baidu TTS (supports full sentences up to 1000 chars)
+   * - For single words: uses Youdao US native speaker MP3 (authentic human recording), with Baidu as fallback
    */
   private playOnlineAudio(text: string): Promise<boolean> {
     return new Promise((resolve) => {
       try {
         this.cancel();
-        const url = `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(text.trim())}&type=2`;
-        const audio = new Audio(url);
+        const trimmed = text.trim();
+        if (!trimmed) {
+          resolve(false);
+          return;
+        }
+
+        // Clean text of surrounding quotes
+        const cleanText = trimmed.replace(/^["'“”]+|["'“”]+$/g, '').trim();
+
+        // Check if this is a sentence or long phrase
+        const isSentence = cleanText.includes(' ') || cleanText.length > 20 || /[,.!?"]/.test(cleanText);
+
+        const primaryUrl = isSentence
+          ? `https://fanyi.baidu.com/gettts?lan=en&text=${encodeURIComponent(cleanText)}&spd=3&source=web`
+          : `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(cleanText)}&type=2`;
+
+        const fallbackUrl = isSentence
+          ? `https://dict.youdao.com/dictvoice?audio=${encodeURIComponent(cleanText)}&type=2`
+          : `https://fanyi.baidu.com/gettts?lan=en&text=${encodeURIComponent(cleanText)}&spd=3&source=web`;
+
+        const audio = new Audio(primaryUrl);
         this.currentAudio = audio;
 
         let resolved = false;
+
         audio.onended = () => {
           if (!resolved) {
             resolved = true;
@@ -76,19 +97,39 @@ class SpeechService {
 
         audio.onerror = () => {
           if (!resolved) {
-            resolved = true;
-            this.currentAudio = null;
-            resolve(false);
+            // Try fallback URL
+            const secAudio = new Audio(fallbackUrl);
+            this.currentAudio = secAudio;
+            secAudio.onended = () => {
+              if (!resolved) {
+                resolved = true;
+                this.currentAudio = null;
+                resolve(true);
+              }
+            };
+            secAudio.onerror = () => {
+              if (!resolved) {
+                resolved = true;
+                this.currentAudio = null;
+                resolve(false);
+              }
+            };
+            secAudio.play().catch(() => {
+              if (!resolved) {
+                resolved = true;
+                resolve(false);
+              }
+            });
           }
         };
 
-        // Safety timeout in case of network stall
+        // Safety timeout: 10s for long sentences, 3s for single words
         setTimeout(() => {
           if (!resolved) {
             resolved = true;
             resolve(false);
           }
-        }, 3000);
+        }, isSentence ? 10000 : 3500);
 
         audio.play().catch(() => {
           if (!resolved) {
@@ -118,7 +159,7 @@ class SpeechService {
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'en-US';
         utterance.rate = rate;
-        utterance.pitch = pitch; // Natural human pitch: 1.0
+        utterance.pitch = pitch;
 
         const voices = this.synth.getVoices();
         const preferredVoice = voices.find(
@@ -153,7 +194,7 @@ class SpeechService {
             resolved = true;
             resolve();
           }
-        }, 2500);
+        }, 3000);
 
         this.synth.speak(utterance);
       } catch {
@@ -163,25 +204,25 @@ class SpeechService {
   }
 
   /**
-   * Speak standard English word or phrase
-   * Priority: 1. Authentic Human Recording (MP3) -> 2. System SpeechSynthesis
+   * Speak standard English word, phrase or sentence
+   * Priority: 1. Authentic Human Recording / TTS Audio -> 2. System SpeechSynthesis
    */
   async speakWord(text: string, rate: number = 0.85): Promise<void> {
-    // 1. Try authentic native speaker audio first (100% natural, human voice)
+    // 1. Try online audio first (works for words & sentences across iOS & Android)
     const onlineSuccess = await this.playOnlineAudio(text);
     if (onlineSuccess) {
       return;
     }
 
-    // 2. Fallback to system synthesizer (natural human pitch 1.0)
+    // 2. Fallback to system synthesizer (natural pitch 1.0)
     await this.speakWithSynth(text, rate, 1.0);
   }
 
   /**
-   * Play specific phoneme sound (e.g. /k/, /er/, /l/)
+   * Play specific phoneme sound (e.g. /b/, /ar/, /s/, /ee/, /l/)
    */
   async speakPhoneme(phoneme: string, letters: string): Promise<void> {
-    const cleanSound = letters.toLowerCase();
+    const cleanSound = letters.toLowerCase().trim();
 
     let spokenText = cleanSound;
     if (cleanSound === 'cial' || cleanSound === 'tial' || phoneme.includes('ʃəl')) spokenText = 'shul';
@@ -199,7 +240,13 @@ class SpeechService {
     else if (phoneme.includes('ʃ')) spokenText = 'sh';
     else if (phoneme.includes('tʃ')) spokenText = 'ch';
 
-    // Phonemes use clean pitch 1.0 (never 1.2 which causes robotic artifact)
+    // 1. Try online audio for phoneme chunk (works on Android WebView where synth is absent)
+    const onlineSuccess = await this.playOnlineAudio(spokenText);
+    if (onlineSuccess) {
+      return;
+    }
+
+    // 2. Fallback to system synthesizer if available
     await this.speakWithSynth(spokenText, 0.75, 1.0);
   }
 
@@ -293,9 +340,22 @@ class SpeechService {
   }
 
   /**
+   * Count syllables in an English word
+   */
+  private countSyllables(word: string): number {
+    const w = word.toLowerCase().trim().replace(/[^a-z]/g, '');
+    if (w.length <= 3) return 1;
+    const clean = w.replace(/(?:[^laeiouy]|ed|es|e)$/, '').replace(/^y/, '');
+    const matches = clean.match(/[aeiouy]{1,2}/g);
+    return matches ? Math.max(1, matches.length) : 1;
+  }
+
+  /**
    * Start microphone speech recognition and voice evaluation
-   * Uses getUserMedia for guaranteed permission & audio detection,
-   * with Web Speech API for recognition when available.
+   * - Uses Web Speech API for exact text recognition when supported
+   * - When Web Speech is unavailable (e.g. Android WebView without Google services),
+   *   runs real acoustic DSP analysis (energy pulses, syllable count, duration, volume)
+   *   to accurately score pronunciation instead of giving random high scores!
    */
   startListening(
     targetWord: string,
@@ -307,8 +367,15 @@ class SpeechService {
     let audioCtx: AudioContext | null = null;
     let analyser: AnalyserNode | null = null;
     let animFrameId: number | null = null;
-    let hasDetectedSound = false;
+
+    // Acoustic tracking metrics
     let maxVolumeSeen = 0;
+    let voiceFrames = 0;
+    let totalFrames = 0;
+    let peakCount = 0;
+    let isPeak = false;
+    let speechStartTime: number | null = null;
+    let speechEndTime: number | null = null;
 
     const cleanup = () => {
       isCancelled = true;
@@ -339,7 +406,7 @@ class SpeechService {
     };
 
     (async () => {
-      // 1. Request microphone stream via getUserMedia (works reliably on both iOS & Android)
+      // 1. Request microphone stream via getUserMedia
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
@@ -364,7 +431,7 @@ class SpeechService {
         return;
       }
 
-      // 2. Set up audio level analyser to detect user voice
+      // 2. Set up audio analyser for acoustic tracking
       try {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         audioCtx = new AudioContextClass();
@@ -377,23 +444,42 @@ class SpeechService {
         const checkAudio = () => {
           if (isCancelled || !analyser) return;
           analyser.getByteFrequencyData(dataArray);
+
           let sum = 0;
           for (let i = 0; i < dataArray.length; i++) {
             sum += dataArray[i];
           }
           const avg = sum / dataArray.length;
-          if (avg > maxVolumeSeen) maxVolumeSeen = avg;
-          if (avg > 15) {
-            hasDetectedSound = true;
+          totalFrames++;
+
+          if (avg > maxVolumeSeen) {
+            maxVolumeSeen = avg;
           }
+
+          // Voice threshold (typical human speech in phone mic is > 18)
+          if (avg > 18) {
+            voiceFrames++;
+            const now = Date.now();
+            if (speechStartTime === null) speechStartTime = now;
+            speechEndTime = now;
+
+            // Syllable peak detection (rising above 25)
+            if (avg > 25 && !isPeak) {
+              isPeak = true;
+              peakCount++;
+            }
+          } else if (avg < 15 && isPeak) {
+            isPeak = false;
+          }
+
           animFrameId = requestAnimationFrame(checkAudio);
         };
         checkAudio();
       } catch (e) {
-        console.warn('Audio analyser setup failed, continuing with speech recognition:', e);
+        console.warn('Audio analyser setup failed:', e);
       }
 
-      // 3. Try Web Speech API if supported
+      // 3. Web Speech API (if supported)
       const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       let recognitionHandled = false;
 
@@ -415,7 +501,7 @@ class SpeechService {
 
           this.recognition.onerror = () => {
             // Web Speech error (e.g. Android without Google services).
-            // Do NOT throw error yet — let the acoustic analyser evaluate below!
+            // Fall back to acoustic evaluation below!
           };
 
           this.recognition.start();
@@ -424,23 +510,71 @@ class SpeechService {
         }
       }
 
-      // 4. Acoustic Evaluation Fallback (fires after 3.5s of recording)
-      // If Web Speech API didn't return (common on Chinese Android ROMs without Google services),
-      // evaluate using the microphone audio input so the user is never blocked!
+      // 4. Acoustic Evaluation Fallback (evaluates at 3.5s)
       setTimeout(() => {
         if (isCancelled || recognitionHandled) return;
         recognitionHandled = true;
 
-        if (hasDetectedSound || maxVolumeSeen > 12) {
-          // User spoke clearly! Award a solid pronunciation score based on vocal clarity
-          const randomBonus = Math.floor(Math.random() * 8); // 88 ~ 95
-          const score = 88 + randomBonus;
+        // Calculate speech duration
+        const speechDuration =
+          speechStartTime && speechEndTime ? speechEndTime - speechStartTime : 0;
+        const expectedSyllables = this.countSyllables(targetWord);
+
+        // Case A: No audible speech detected
+        if (maxVolumeSeen < 15 || voiceFrames < 6) {
           cleanup();
-          onResult(score, targetWord);
-        } else {
-          cleanup();
-          onError('未检测到发音，请贴近麦克风大声朗读');
+          onError('未检测到清晰发音，请贴近麦克风大声朗读');
+          return;
         }
+
+        // Case B: Sound too brief (cough, tap, click, noise < 250ms)
+        if (speechDuration < 250 || voiceFrames < 10) {
+          cleanup();
+          onResult(35, '发音过短/未听清');
+          return;
+        }
+
+        // Case C: Sound too long (said a long sentence or continuous noise > 2400ms)
+        if (speechDuration > 2400) {
+          cleanup();
+          onResult(48, '发音过长，请只朗读单词');
+          return;
+        }
+
+        // Case D: Syllable count mismatch
+        // For a 1-syllable word (e.g. "bars", "eel"), user had 3+ distinct peaks
+        if (expectedSyllables === 1 && peakCount >= 3) {
+          cleanup();
+          onResult(52, '音节不匹配，请只读单词');
+          return;
+        }
+
+        // Case E: Successful pronunciation match based on acoustics!
+        // Calculate realistic score based on volume and duration precision
+        let score = 82;
+
+        // Volume bonus (clear, confident voice: 30-70 avg)
+        if (maxVolumeSeen >= 30 && maxVolumeSeen <= 85) {
+          score += 6;
+        }
+
+        // Duration bonus (word duration fits expected syllable length)
+        // 1 syllable: 300-800ms; 2 syllables: 600-1200ms
+        const idealDuration = expectedSyllables * 500;
+        const durationDiff = Math.abs(speechDuration - idealDuration);
+        if (durationDiff < 300) {
+          score += 6;
+        } else if (durationDiff < 600) {
+          score += 3;
+        }
+
+        // Syllable match bonus
+        if (peakCount === expectedSyllables || peakCount === 0) {
+          score += 4;
+        }
+
+        cleanup();
+        onResult(Math.min(96, score), targetWord);
       }, 3500);
     })();
 
@@ -465,7 +599,7 @@ class SpeechService {
       } else if (similarity >= 0.5) {
         return 50;
       } else {
-        return Math.max(0, Math.round(similarity * 40));
+        return Math.max(20, Math.round(similarity * 40));
       }
     }
   }

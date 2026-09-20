@@ -24,3 +24,19 @@ dist-ssr
 *.sln
 *.sw?
 supabase/.temp/
+
+# Mobile (Capacitor / Android / iOS build artifacts)
+android/.gradle
+android/build
+android/app/build
+android/captures
+android/.externalNativeBuild
+android/.cxx
+android/local.properties
+ios/App/Pods
+ios/App/build
+ios/App/.build
+ios/App/DerivedData
+ios/App/*.xcworkspace/xcuserdata
+ios/App/*.xcodeproj/xcuserdata
+
